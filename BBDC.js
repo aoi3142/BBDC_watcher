@@ -162,7 +162,7 @@
             // Also log to console for debugging
             console.log('Available slots in range:', availableSlots);
         } else {
-            console.log('No available slots found in the specified date range');
+            console.log(`No${ONLY_SHOW_NEW ? ' new' : ''} available slots found in the specified date range`);
         }
     }
 
