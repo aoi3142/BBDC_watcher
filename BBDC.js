@@ -90,12 +90,21 @@
         const data = await sendRequest();
         try {
             if (!data) throw new Error('No data received');
-            if (!data.data?.releasedSlotListGroupByDay) throw new Error('Invalid response format');
+            if (!data.data?.releasedSlotListGroupByDay) {
+                if (data?.message === 'No access token.') {
+                    console.error('No access token found. Please log in to BBDC.');
+                    showNotification('Logged out', 'Please log in again');
+                    initializeWhenReady();
+                    return;
+                } else {
+                    throw new Error('Invalid response format');
+                }
+            }
         } catch (error) {
             console.error('Processing error:', error);
             showErrorNotification(`Data parsing failed: ${error.message}`);
             console.log('Response data:', data);
-            return {};
+            return;
         }
 
         const slotsByDay = data?.data?.releasedSlotListGroupByDay || {};
