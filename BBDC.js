@@ -1,10 +1,9 @@
 // ==UserScript==
-// @name         Lesson Booking Monitor
-// @version      1.0
+// @name         BBDC practical lesson booking monitor
+// @version      1.1
 // @description  Checks BBDC lesson availability and notifies when slots are available.
 // @author       Xinyuan
 // @match        https://booking.bbdc.sg/*
-// @grant        GM_notification
 // ==/UserScript==
 
 (function() {
@@ -17,6 +16,7 @@
 
     const INTERVAL_MINUTES_MIN = 3;                     // Minimum refresh interval in minutes
     const INTERVAL_MINUTES_MAX = 5;                     // Maximum refresh interval in minutes
+    const ONLY_SHOW_NEW = true;                         // Only show new available slots since last check
 
     // BBDC Booking Details
     // To find these values, inspect the network requests in your browser's developer tools
@@ -96,6 +96,7 @@
     }
 
     // === AVAILABILITY CHECK ===
+    const availabilityMap = {};
     async function checkAvailability() {
         const data = await sendRequest();
         try {
@@ -104,21 +105,24 @@
         } catch (error) {
             console.error('Processing error:', error);
             showErrorNotification(`Data parsing failed: ${error.message}`);
+            console.log('Response data:', data);
             return {};
         }
 
-        const availabilityMap = {};
         const slotsByDay = data?.data?.releasedSlotListGroupByDay || {};
 
         for (const [date, slots] of Object.entries(slotsByDay)) {
-            availabilityMap[date] = {};
+            if (!availabilityMap[date]) {
+                availabilityMap[date] = {};
+            }
             for (let sessionNo = 1; sessionNo <= 8; sessionNo++) {
                 const slot = slots.find(s => s.c2psrSessionNo === sessionNo);
                 if (slot) {
                     availabilityMap[date][sessionNo] = {
                         isAvailable: slot.bookingProgress === 'Available',
                         startTime: slot.startTime,
-                        endTime: slot.endTime
+                        endTime: slot.endTime,
+                        new: slot.bookingProgress === 'Available' && (!availabilityMap[date][sessionNo] || availabilityMap[date][sessionNo].isAvailable === false)
                     };
                 }
             }
@@ -129,23 +133,31 @@
         scheduleNextCheck();
     }
 
-    function notifyAvailableSlots(availabilityMap) {
+    async function notifyAvailableSlots(availabilityMap) {
         const availableSlots = [];
         const [startDate, endDate] = DATE_RANGE.map(d => new Date(d));
 
-        for (const [dateStr, sessions] of Object.entries(availabilityMap)) {
+        // Sort dates chronologically before processing
+        const sortedDates = Object.keys(availabilityMap).sort((a, b) => {
+            return new Date(a.split(' ')[0]) - new Date(b.split(' ')[0]);
+        });
+
+        for (const dateStr of sortedDates) {
+            const sessions = availabilityMap[dateStr];
             const slotDate = new Date(dateStr.split(' ')[0]);
 
             if (slotDate >= startDate && slotDate <= endDate) {
                 const formattedDate = slotDate.toISOString().split('T')[0];
-                const dayOfWeek = slotDate.toLocaleDateString('en-US', { weekday: 'short' });
-                const weekend = dayOfWeek === 'Sat' || dayOfWeek === 'Sun';
+                const dayOfWeek = slotDate.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+                const weekend = dayOfWeek === 'SAT' || dayOfWeek === 'SUN';
 
-                for (const [sessionNo, slotInfo] of Object.entries(sessions)) {
+                for (const sessionNo of Object.keys(sessions).map(Number).sort((a, b) => a - b)) {
+                    const slotInfo = sessions[sessionNo];
                     const peak = weekend || sessionNo > 5;
                     if (slotInfo.isAvailable && sessionNo >= MIN_SESSION && (!weekend && sessionNo >= MIN_WEEKDAY_SESSION)) {
+                        if (ONLY_SHOW_NEW && !slotInfo.new) continue; // Skip if not new and ONLY_SHOW_NEW is true
                         availableSlots.push(
-                            `${formattedDate} ${dayOfWeek} ⏰ ${slotInfo.startTime} to ${slotInfo.endTime}${peak ? ' (Peak)' : ''}`
+                            `${formattedDate} ${dayOfWeek}⏰${slotInfo.startTime} to ${slotInfo.endTime}${peak ? ' (Peak)' : ''}`
                         );
                     }
                 }
@@ -153,12 +165,10 @@
         }
 
         if (availableSlots.length > 0) {
-            GM_notification({
-                title: `🎯 ${availableSlots.length} Slots Available!`,
-                text: `Available in your date range:\n${availableSlots.join('\n')}`,
-                timeout: 60000, // 60 seconds
-                highlight: true
-            });
+            await showNotification(
+                `🎯 ${availableSlots.length} Slots Available!`,
+                `${availableSlots.join('\n')}`
+            );
 
             // Also log to console for debugging
             console.log('Available slots in range:', availableSlots);
@@ -168,13 +178,10 @@
     }
 
     // === NEW ERROR NOTIFICATION FUNCTION ===
-    function showErrorNotification(message) {
-        GM_notification({
-            title: '⚠️ Booking Monitor Error',
-            text: message,
-            timeout: 60000,
-            highlight: true
-        });
+    async function showErrorNotification(message) {
+        await showNotification(
+            '⚠️ Booking Monitor Error',
+        );
     }
 
     const randomizedInterval = () => {
@@ -188,8 +195,36 @@
 
     // Set up randomized recurring checks
     const scheduleNextCheck = () => {
+        let interval = randomizedInterval();
+        console.log(`[Monitor] Next check in ${interval / 1000 / 60} minutes`);
         setTimeout(async () => {
             await checkAvailability();
-        }, randomizedInterval());
+        }, interval);
     };
 })();
+
+// === UNIVERSAL NOTIFICATION FUNCTION ===
+async function showNotification(title, message) {
+    if ('Notification' in window) {
+        try {
+            // Request permission if needed
+            if (Notification.permission !== 'granted') {
+                await Notification.requestPermission();
+            }
+
+            if (Notification.permission === 'granted') {
+                new Notification(title, {
+                    body: message,
+                    icon: 'https://info.bbdc.sg/favicon.ico'
+                });
+                return;
+            }
+        } catch (e) {
+            console.error('Notification error:', e);
+        }
+    }
+
+    // Fallback to alert()
+    console.log(`${title}\n${message}`);
+    alert(`${title}\n${message}`);
+}
