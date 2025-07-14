@@ -21,10 +21,10 @@
     // BBDC Booking Details
     // To find these values, inspect the network requests in your browser's developer tools
     // look for request listPracSlotReleased -> Payload
-    const SUBJECT = '2.02';                             // Subject code to monitor
-    const SUBJECT_SUBDESC = 'Subject 2.2';              // Description for the subject
-    const COURSE_TYPE = '2B';                           // Course type, e.g., '2B'
-    const VEHICLE_TYPE = 'Circuit';                     // Vehicle type, e.g., 'Circuit' for circuit lessons
+    const stageSubNo = '2.02';                          // Subject code to monitor
+    const stageSubDesc = 'Subject 2.2';                 // Description for the subject
+    const courseType = '2B';                            // Course type, e.g., '2B'
+    const subVehicleType = 'Circuit';                   // Vehicle type, e.g., 'Circuit' for circuit lessons
 
     // API endpoint and headers
     const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/c2practical/listPracSlotReleased';
@@ -68,11 +68,11 @@
             method: 'POST',
             headers: headers,
             body: JSON.stringify({
-                courseType: COURSE_TYPE,
+                courseType: courseType,
                 insInstructorId: '',
-                stageSubDesc: SUBJECT_SUBDESC,
-                subVehicleType: VEHICLE_TYPE,
-                stageSubNo: SUBJECT,
+                stageSubDesc: stageSubDesc,
+                subVehicleType: subVehicleType,
+                stageSubNo: stageSubNo,
             }),
             referrer: REFERRER,
             credentials: 'include',
