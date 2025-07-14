@@ -46,24 +46,13 @@
         }
     }
 
-    // Dynamic headers (will be fetched from storage or extracted)
-    let headers = {
-        'accept': 'application/json, text/plain, */*',
-        'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8,zh-CN;q=0.7,zh;q=0.6',
-        'authorization': getAuthToken(),
-        'content-type': 'application/json',
-        'jsessionid': getJsessionId(),
-        'priority': 'u=1, i',
-        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-    };
-
     // === MAIN FUNCTIONS ===
     async function sendRequest() {
+        let headers = {
+            'authorization': getAuthToken(),
+            'content-type': 'application/json',
+            'jsessionid': getJsessionId()
+        };
         const requestOptions = {
             method: 'POST',
             headers: headers,
@@ -191,7 +180,16 @@
     };
 
     // First run
-    checkAvailability();
+    function initializeWhenReady() {
+        if (getAuthToken()) {
+            console.log('Auth token found, starting monitoring...');
+            checkAvailability();
+        } else {
+            console.log('Auth token not found, retrying...');
+            setTimeout(initializeWhenReady, 1000);
+        }
+    }
+    initializeWhenReady();
 
     // Set up randomized recurring checks
     const scheduleNextCheck = () => {
