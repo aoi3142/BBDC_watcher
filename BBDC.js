@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         BBDC practical lesson booking monitor
-// @version      1.1
+// @version      1.2
 // @description  Checks BBDC lesson availability and notifies when slots are available.
 // @author       Xinyuan
 // @match        https://booking.bbdc.sg/*
@@ -9,6 +9,9 @@
 
 const BOT_TOKEN = '';
 const CHAT_ID = ''; // Find this in https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
+
+const userId = ''; // Your BBDC user ID
+const userPass = ''; // Your BBDC password
 
 (function() {
     'use strict';
@@ -202,7 +205,12 @@ const CHAT_ID = ''; // Find this in https://api.telegram.org/bot<YOUR_BOT_TOKEN>
             setTimeout(initializeWhenReady, 20 * 60 * 1000 + 5000);
         } else {
             console.log('Auth token not found, retrying...');
-            setTimeout(initializeWhenReady, 1000);
+            if (!userId || !userPass) {
+                setTimeout(initializeWhenReady, 1000);
+            } else {
+                console.log('Attempting to log in...');
+                login();
+            }
         }
     }
     initializeWhenReady();
@@ -279,4 +287,186 @@ async function sendTelegramNotification(message) {
     } catch (error) {
         console.error("Error sending Telegram notification:", error);
     }
+}
+
+async function login(){
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/auth/checkIdAndPass';
+    let headers = {
+        'content-type': 'application/json',
+        'jsessionid': '',
+    };
+    const requestOptions = {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+            userId: userId,
+            userPass: userPass,
+        }),
+        method: "POST",
+    };
+    console.log('[Login] Sending login request...');
+    console.log('[Login] Request options:', requestOptions);
+    const response = await fetch(REQUEST_URL, requestOptions);
+    const responseData = await response.json();
+    console.log('[Captcha] Response:', responseData);
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await captcha();
+    return;
+}
+
+async function captcha() {
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/auth/getLoginCaptchaImage';
+    const requestOptions = {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'jsessionid': '',
+        },
+        body: "{}",
+        method: "POST",
+    };
+    const response = await fetch(REQUEST_URL, requestOptions);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const responseData = await response.json();
+    console.log('[Captcha] Response:', responseData);
+    const base64Image = await responseData?.data?.image;
+    const captchaToken = await responseData?.data?.captchaToken;
+    const verifyCodeId = await responseData?.data?.verifyCodeId;
+    if (!base64Image) {
+        throw new Error('No image data received');
+    }
+    showCaptchaImage(base64Image);
+    const captcha = await sendImageAndWaitForResponse(base64Image);
+    if (!captcha) {
+        throw new Error('No captcha response received');
+    }
+    await captchaLogin(captchaToken, verifyCodeId, captcha);
+}
+
+function showCaptchaImage(base64Image) {
+    const img = new Image();
+    img.src = base64Image;
+    document.body.appendChild(img);
+}
+
+async function sendImageAndWaitForResponse(base64ImageData) {
+    try {
+        // 1. Send the image to Telegram
+        const sentMessage = await sendImageToTelegram(base64ImageData);
+        const messageId = sentMessage.result.message_id;
+
+        console.log('Image sent successfully. Message ID:', messageId);
+
+        // 2. Start checking for responses
+        const response = await waitForTelegramResponse(messageId);
+
+        console.log('User responded:', response);
+        return response;
+    } catch (error) {
+        console.error('Error in sendImageAndWaitForResponse:', error);
+        throw error;
+    }
+}
+
+// Helper function to send image
+async function sendImageToTelegram(base64Data) {
+    // Remove data URL prefix if present
+    const base64Image = base64Data.replace(/^data:image\/\w+;base64,/, '');
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
+
+    // Convert base64 to Blob
+    const blob = await base64ToBlob(base64Image);
+    const formData = new FormData();
+    formData.append('chat_id', CHAT_ID);
+    formData.append('photo', blob);
+
+    const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to send image: ${response.status}`);
+    }
+
+    return response.json();
+}
+
+// Helper function to wait for user response
+async function waitForTelegramResponse(originalMessageId, timeout = 300000 /* 5 minutes */) {
+    const startTime = Date.now();
+    const checkInterval = 3000; // Check every 3 seconds
+
+    while (Date.now() - startTime < timeout) {
+        try {
+            // Get updates from the bot
+            const updates = await getBotUpdates();
+
+            // Find replies to our original message
+            const reply = updates.result.find(update =>
+                update.message?.reply_to_message?.message_id === originalMessageId
+            );
+
+            if (reply) {
+                return reply.message.text;
+            }
+
+            // Wait before checking again
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+        } catch (error) {
+            console.error('Error checking for replies:', error);
+            // Continue waiting despite errors
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+        }
+    }
+
+    throw new Error('Timeout waiting for response');
+}
+
+// Helper function to get bot updates
+async function getBotUpdates() {
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+        throw new Error(`Failed to get updates: ${response.status}`);
+    }
+
+    return response.json();
+}
+
+// Helper function to convert base64 to Blob
+function base64ToBlob(base64) {
+    return new Promise((resolve) => {
+        const byteCharacters = atob(base64);
+        const byteArrays = [];
+
+        for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+            const slice = byteCharacters.slice(offset, offset + 512);
+            const byteNumbers = new Array(slice.length);
+
+            for (let i = 0; i < slice.length; i++) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+
+            byteArrays.push(new Uint8Array(byteNumbers));
+        }
+
+        resolve(new Blob(byteArrays, { type: 'image/png' }));
+    });
+}
+
+async function captchaLogin(captchaToken, verifyCodeId, verifyCodeValue) {
+    const vue = document.querySelector('#app').__vue__;
+    vue.$store.dispatch('user/userLogin', {
+        captchaToken: captchaToken,
+        verifyCodeId: verifyCodeId,
+        verifyCodeValue: verifyCodeValue,
+        userId: userId,
+        userPass: userPass
+    }).then(() => {
+        vue.$store.commit("user/set_loginInfo", {}),
+        vue.$router.push("/")
+    })
 }
