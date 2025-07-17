@@ -4,7 +4,11 @@
 // @description  Checks BBDC lesson availability and notifies when slots are available.
 // @author       Xinyuan
 // @match        https://booking.bbdc.sg/*
+// @connect      api.telegram.org
 // ==/UserScript==
+
+const BOT_TOKEN = '';
+const CHAT_ID = ''; // Find this in https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 
 (function() {
     'use strict';
@@ -93,6 +97,7 @@
             if (!data.data?.releasedSlotListGroupByDay) {
                 if (data?.message === 'No access token.') {
                     console.error('No access token found. Please log in to BBDC.');
+                    console.log('Response data:', data);
                     showNotification('Logged out', 'Please log in again');
                     initializeWhenReady();
                     return;
@@ -177,6 +182,7 @@
 
     // === NEW ERROR NOTIFICATION FUNCTION ===
     async function showErrorNotification(message) {
+        sendTelegramNotification(message);
         await showNotification(
             '⚠️ Booking Monitor Error',
         );
@@ -192,7 +198,8 @@
     function initializeWhenReady() {
         if (getAuthToken()) {
             console.log('Auth token found, starting monitoring...');
-            checkAvailability();
+            setTimeout(checkAvailability, 1000);
+            setTimeout(initializeWhenReady, 20 * 60 * 1000 + 5000);
         } else {
             console.log('Auth token not found, retrying...');
             setTimeout(initializeWhenReady, 1000);
@@ -203,7 +210,7 @@
     // Set up randomized recurring checks
     const scheduleNextCheck = () => {
         let interval = randomizedInterval();
-        console.log(`[Monitor] Next check in ${interval / 1000 / 60} minutes`);
+        console.log(`[Monitor] Next check in ${(interval / 1000 / 60).toFixed(2)} minutes`);
         setTimeout(async () => {
             await checkAvailability();
         }, interval);
@@ -212,6 +219,11 @@
 
 // === UNIVERSAL NOTIFICATION FUNCTION ===
 async function showNotification(title, message) {
+    try {
+        sendTelegramNotification(message);
+    } catch (error) {
+        console.error("Error sending Telegram notification:", error);
+    }
     if ('Notification' in window) {
         try {
             // Request permission if needed
@@ -234,4 +246,37 @@ async function showNotification(title, message) {
     // Fallback to alert()
     console.log(`${title}\n${message}`);
     alert(`${title}\n${message}`);
+}
+
+// Function to send Telegram notification
+async function sendTelegramNotification(message) {
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+    if (!BOT_TOKEN || !CHAT_ID) {
+        return;
+    }
+
+    if (!message || message.trim() === "") {
+        message = "BBDC: empty message";
+    }
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                chat_id: CHAT_ID,
+                text: message
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        console.log("Telegram notification sent successfully");
+    } catch (error) {
+        console.error("Error sending Telegram notification:", error);
+    }
 }
