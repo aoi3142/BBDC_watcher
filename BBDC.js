@@ -115,6 +115,12 @@ const userPass = ''; // Your BBDC password
             return;
         }
 
+        if (!logged_in) {
+            logged_in = true;
+            sendTelegramNotification('Logged in successfully');
+            console.log('Logged in successfully');
+        }
+
         const slotsByDay = data?.data?.releasedSlotListGroupByDay || {};
 
         for (const [date, slots] of Object.entries(slotsByDay)) {
@@ -197,6 +203,8 @@ const userPass = ''; // Your BBDC password
         return Math.floor(Math.random() * (max - min + 1)) + min;
     };
 
+    var logged_in = true;
+
     // First run
     async function initializeWhenReady() {
         if (getAuthToken()) {
@@ -208,6 +216,7 @@ const userPass = ''; // Your BBDC password
             if (!userId || !userPass) {
                 setTimeout(initializeWhenReady, 1000);
             } else {
+                logged_in = false;
                 console.log('Attempting to log in...');
                 await login();
                 console.log('Login successful, starting monitoring...');
