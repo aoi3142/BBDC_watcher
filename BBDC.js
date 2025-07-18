@@ -480,7 +480,7 @@ async function sendImageToTelegram(base64Data) {
 }
 
 // Helper function to wait for user response
-async function waitForTelegramResponse(originalMessageId, timeout = 300000 /* 5 minutes */) {
+async function waitForTelegramResponse(originalMessageId, timeout = 6 * 60 * 60 * 1000 /* 6 hours */) {
     const startTime = Date.now();
     const checkInterval = 3000; // Check every 3 seconds
 
@@ -495,7 +495,13 @@ async function waitForTelegramResponse(originalMessageId, timeout = 300000 /* 5 
             );
 
             if (reply) {
+                if (Date.now() - startTime > 2 * 60 * 1000) {
+                    sendTelegramNotification('Received reply, but more than 2 minutes has passed, please relogin');
+                    console.log('Received reply, but more than 2 minutes has passed, refreshing page...');
+                    window.location.reload();
+                } else {
                 return reply.message.text;
+                }
             }
 
             // Wait before checking again
