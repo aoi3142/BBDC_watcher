@@ -198,7 +198,7 @@ const userPass = ''; // Your BBDC password
     };
 
     // First run
-    function initializeWhenReady() {
+    async function initializeWhenReady() {
         if (getAuthToken()) {
             console.log('Auth token found, starting monitoring...');
             setTimeout(checkAvailability, 1000);
@@ -209,7 +209,9 @@ const userPass = ''; // Your BBDC password
                 setTimeout(initializeWhenReady, 1000);
             } else {
                 console.log('Attempting to log in...');
-                login();
+                await login();
+                console.log('Login successful, starting monitoring...');
+                setTimeout(checkAvailability, 5000);
             }
         }
     }
