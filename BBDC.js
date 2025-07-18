@@ -215,6 +215,7 @@ const userPass = ''; // Your BBDC password
             }
         }
     }
+    console.log('Initializing BBDC Booking Monitor...');
     initializeWhenReady();
 
     // Set up randomized recurring checks
@@ -338,12 +339,86 @@ async function captcha() {
     if (!base64Image) {
         throw new Error('No image data received');
     }
-    showCaptchaImage(base64Image);
-    const captcha = await sendImageAndWaitForResponse(base64Image);
+    const processedImage = await preprocessCaptcha(base64Image);
+    showCaptchaImage(processedImage);
+    const captcha = await sendImageAndWaitForResponse(processedImage);
     if (!captcha) {
         throw new Error('No captcha response received');
     }
     await captchaLogin(captchaToken, verifyCodeId, captcha);
+}
+
+async function preprocessCaptcha(base64Image) {
+    try {
+        // Create canvas for processing
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Load image
+        const img = new Image();
+        img.src = base64Image;
+        await new Promise(resolve => img.onload = resolve);
+        
+        // Set canvas dimensions
+        canvas.width = img.width;
+        canvas.height = img.height * 2; // Double height for stacking
+        
+        // Draw original image
+        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, img.height); // Stack the image
+        
+        // Step 1: Get image data and find dominant colors
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const colorCounts = {};
+
+        for (let i = 0; i < Math.floor(data.length / 2); i += 4) {
+            const r = data[i];
+            const g = data[i+1];
+            const b = data[i+2];
+
+            const colorKey = `${r},${g},${b}`;
+            colorCounts[colorKey] = (colorCounts[colorKey] || 0) + 1;
+        }
+        
+        // Get top 5 colors
+        const topColors = Object.entries(colorCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(1, 6)
+            .map(item => item[0].split(',').map(Number));
+        console.log('Top colors:', topColors);
+
+        for (let i = Math.floor(data.length / 2); i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i+1];
+            const b = data[i+2];
+            let isTopColor = false;
+            
+            // Check if pixel matches any top color
+            for (const [tr, tg, tb] of topColors) {
+                if (r === tr && g === tg && b === tb) {
+                    isTopColor = true;
+                    break;
+                }
+            }
+            
+            if (!isTopColor) {
+                // Set to white
+                data[i] = data[i+1] = data[i+2] = 255;
+            } else {
+                // Set to black
+                data[i] = data[i+1] = data[i+2] = 0;
+            }
+        }
+        // Return processed image as base64
+        ctx.putImageData(imageData, 0, 0);
+        const processedBase64 = canvas.toDataURL('image/png');
+        return processedBase64;
+
+    } catch (error) {
+        console.error('Error processing captcha image:', error);
+        return base64Image; // Fallback to original image if processing fails
+    }
 }
 
 function showCaptchaImage(base64Image) {
@@ -468,7 +543,7 @@ async function captchaLogin(captchaToken, verifyCodeId, verifyCodeValue) {
         userId: userId,
         userPass: userPass
     }).then(() => {
-        vue.$store.commit("user/set_loginInfo", {}),
+        vue.$store.commit("user/set_loginInfo", {});
         vue.$router.push("/")
     })
 }
