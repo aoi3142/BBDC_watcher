@@ -39,6 +39,7 @@ let logged_in = true;
 let lastCheckTime = null; // Track last check time
 let initializeID;
 let availabilityID;
+let clickedLogout = false; // Track if logout button was clicked
 const userInfo = {};
 
 (function() {
@@ -57,7 +58,8 @@ const userInfo = {};
             store.subscribeAction({
                 before: (action, state) => {
                     console.log("Action: ", action.type, action.payload)
-                    if (action.type === 'user/logOut') {
+                    if (action.type === 'user/logOut' && !clickedLogout) {
+                        console.log('[Monitor] User auto logged out, saving current state...');
                         userInfo.cookie = getAuthToken();
                         userInfo.userName = state.user.userName;
                         userInfo.courseType = state.user.courseType;
@@ -65,13 +67,17 @@ const userInfo = {};
                     }
                 },
                 after: (action, state) => {
-                    if (action.type === 'user/logOut') {
+                    if (action.type === 'user/logOut' && !clickedLogout) {
+                        console.log('[Monitor] User auto logged out, restoring previous state...');
                         store.commit("user/set_userName", userInfo.userName);
                         store.commit("user/set_courseType", userInfo.courseType);
                         store.commit("user/set_authToken", userInfo.authToken);
                         store.commit("user/set_global_canDoBooking", true);
                         document.cookie = `bbdc-token=${encodeURIComponent(userInfo.cookie)}`;
                         app.__vue__.$router.push("/"); // Wait for auto redirect
+                    } else if (action.type === 'user/logOut' && clickedLogout) {
+                        console.log('[Monitor] User clicked logout button, not restoring previous state');
+                        clickedLogout = false; // Reset the flag after handling logout
                     }
                 }
             })
@@ -79,6 +85,12 @@ const userInfo = {};
             // store.subscribe((mutation, state) => {
             //     console.log("Mutation: ", mutation.type, mutation.payload)
             // })
+
+            const logoutButton = document.getElementsByClassName("btn")[0];
+            console.log('[Monitor] Logout button found:', logoutButton);
+            logoutButton.addEventListener("click", function(){
+                clickedLogout = true;
+            }, true);
 
             // First run
             console.log('[Monitor] Initializing BBDC Booking Monitor...');
@@ -135,6 +147,7 @@ async function checkAvailability() {
     const accountCourseType = document.querySelector('#app').__vue__?.$store.state.booking.activeCourseList || [];
     if (!accountCourseType || accountCourseType.length === 0) {
         scheduleNextCheck();
+        return;
     }
 
     // Check availability for the specified course type
@@ -318,7 +331,9 @@ async function class2BcheckAvailability() {
     console.log('[Monitor] Sending request...');
     const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
     if (data === null || !data.data?.releasedSlotListGroupByDay) {
+        console.error('[Monitor] Availability check failed:', data);
         document.querySelector('#app').__vue__.$router.push("/");
+        scheduleNextCheck();
         return;
     }
     const slotsByDay = data.data.releasedSlotListGroupByDay;
