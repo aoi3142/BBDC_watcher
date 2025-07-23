@@ -86,11 +86,7 @@ const userInfo = {};
             //     console.log("Mutation: ", mutation.type, mutation.payload)
             // })
 
-            const logoutButton = document.getElementsByClassName("btn")[0];
-            console.log('[Monitor] Logout button found:', logoutButton);
-            logoutButton.addEventListener("click", function(){
-                clickedLogout = true;
-            }, true);
+            addLogoutButtonListener(); // Add listener to logout button
 
             // First run
             console.log('[Monitor] Initializing BBDC Booking Monitor...');
@@ -99,12 +95,26 @@ const userInfo = {};
     }, 500);
 })();
 
+function addLogoutButtonListener() {
+    const logoutButton = document.getElementsByClassName("btn")[0];
+    if (logoutButton) {
+        console.log('[Monitor] Logout button found:', logoutButton);
+        logoutButton.addEventListener("click", function(){
+            clickedLogout = true;
+        }, true);
+        return true; // Successfully added listener
+    }
+    console.error('[Monitor] Logout button not found, cannot add listener');
+    return false; // Logout button not found
+}
+
 async function initializeWhenReady() {
     if (isLoggedIn()) {
         if (!logged_in) {
             sendTelegramNotification('Logged in successfully');
             console.log('[Login] Logged in successfully');
             logged_in = true;
+            addLogoutButtonListener(); // Ensure logout button listener is added
         }
         if (!initCourseSelection()) {
             clearInterval(initializeID);
