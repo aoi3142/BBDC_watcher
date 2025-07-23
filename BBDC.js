@@ -5,6 +5,7 @@
 // @author       Xinyuan
 // @match        https://booking.bbdc.sg/*
 // @connect      api.telegram.org
+// @require      https://unpkg.com/tesseract.js@6.0.1/dist/tesseract.min.js
 // ==/UserScript==
 
 const BOT_TOKEN = '';
@@ -41,6 +42,9 @@ let initializeID;
 let availabilityID;
 let clickedLogout = false; // Track if logout button was clicked
 const userInfo = {};
+const worker = await Tesseract.createWorker('eng');
+let disabled = false;
+let trySolve = true;
 
 (function() {
     'use strict';
@@ -55,11 +59,12 @@ const userInfo = {};
             const store = app.__vue__.$store;
 
             // Deal with auto logout
+            console.tlog('[Monitor] Patching auto logout...');
             store.subscribeAction({
                 before: (action, state) => {
-                    console.log("Action: ", action.type, action.payload)
+                    console.tlog("Action: ", action.type, action.payload)
                     if (action.type === 'user/logOut' && !clickedLogout) {
-                        console.log('[Monitor] User auto logged out, saving current state...');
+                        console.tlog('[Monitor] User auto logged out, saving current state...');
                         userInfo.cookie = getAuthToken();
                         userInfo.userName = state.user.userName;
                         userInfo.courseType = state.user.courseType;
@@ -68,7 +73,7 @@ const userInfo = {};
                 },
                 after: (action, state) => {
                     if (action.type === 'user/logOut' && !clickedLogout) {
-                        console.log('[Monitor] User auto logged out, restoring previous state...');
+                        console.tlog('[Monitor] User auto logged out, restoring previous state...');
                         store.commit("user/set_userName", userInfo.userName);
                         store.commit("user/set_courseType", userInfo.courseType);
                         store.commit("user/set_authToken", userInfo.authToken);
@@ -76,66 +81,86 @@ const userInfo = {};
                         document.cookie = `bbdc-token=${encodeURIComponent(userInfo.cookie)}`;
                         app.__vue__.$router.push("/"); // Wait for auto redirect
                     } else if (action.type === 'user/logOut' && clickedLogout) {
-                        console.log('[Monitor] User clicked logout button, not restoring previous state');
+                        console.tlog('[Monitor] User clicked logout button, not restoring previous state');
                         clickedLogout = false; // Reset the flag after handling logout
+                        disabled = true; // Disable further actions
                     }
                 }
             })
 
             // store.subscribe((mutation, state) => {
-            //     console.log("Mutation: ", mutation.type, mutation.payload)
+            //     console.tlog("Mutation: ", mutation.type, mutation.payload)
             // })
 
             addLogoutButtonListener(); // Add listener to logout button
 
             // First run
-            console.log('[Monitor] Initializing BBDC Booking Monitor...');
+            console.tlog('[Monitor] Initializing BBDC Booking Monitor...');
             initializeID ??= setInterval(initializeWhenReady, 1000);
         }
     }, 500);
 })();
 
+function timestamp() {
+    return `[${new Date().toLocaleTimeString()}]`;
+}
+console.tlog = function(...args) {
+    console.log(timestamp(), ...args);
+};
+console.terror = function(...args) {
+    console.error(timestamp(), ...args);
+};
+
 function addLogoutButtonListener() {
     const logoutButton = document.getElementsByClassName("btn")[0];
     if (logoutButton) {
-        console.log('[Monitor] Logout button found:', logoutButton);
+        console.tlog('[Monitor] Logout button found:', logoutButton);
         logoutButton.addEventListener("click", function(){
             clickedLogout = true;
         }, true);
         return true; // Successfully added listener
     }
-    console.error('[Monitor] Logout button not found, cannot add listener');
+    console.terror('[Monitor] Logout button not found, cannot add listener');
     return false; // Logout button not found
 }
 
 async function initializeWhenReady() {
+    if (disabled) {
+        clearInterval(initializeID);
+        return;
+    }
     if (isLoggedIn()) {
         if (!logged_in) {
             sendTelegramNotification('Logged in successfully');
-            console.log('[Login] Logged in successfully');
+            console.tlog('[Login] Logged in successfully');
             logged_in = true;
             addLogoutButtonListener(); // Ensure logout button listener is added
         }
         if (!initCourseSelection()) {
-            clearInterval(initializeID);
             return;
         }
         clearInterval(initializeID);
         initializeID = null;
-        console.log('[Monitor] Starting monitoring...');
+        console.tlog('[Monitor] Starting monitoring...');
         checkAvailability();
     } else {
         if (logged_in) {
-            console.log('[Login] Logged out, reinitializing...');
+            console.tlog('[Login] Logged out, reinitializing...');
         }
         logged_in = false;
         if (!userId || !userPass) {
-            clearInterval(initializeID);
+            return;
         } else {
-            console.log('[Login] Attempting to log in...');
+            console.tlog('[Login] Attempting to log in...');
             clearInterval(initializeID);
             initializeID = null;
-            await login();
+            if (await login(trySolve)) {
+                console.tlog('[Login] Login done');
+                trySolve = true;
+                initializeID ??= setInterval(initializeWhenReady, 1000);
+            } else {
+                sendTelegramNotification('Login failed, manual intervention required');
+            }
         }
     }
 }
@@ -144,13 +169,13 @@ async function initializeWhenReady() {
 async function checkAvailability() {
     availabilityID = null;
     if (!isLoggedIn()) {
-        console.error('[Login] Not logged in, cannot check availability');
+        console.terror('[Login] Not logged in, cannot check availability');
         initializeID ??= setInterval(initializeWhenReady, 1000);
         return;
     }
     const now = new Date();
     if (lastCheckTime && (now - lastCheckTime) < 1000 * 60 * INTERVAL_MINUTES_MIN) {
-        console.log(`[Monitor] Last check was too recent, skipping this check.`);
+        console.tlog(`[Monitor] Last check was too recent, skipping this check.`);
         return; // Skip this check if last check was too recent
     }
     lastCheckTime = now; // Update last check time
@@ -163,10 +188,10 @@ async function checkAvailability() {
     // Check availability for the specified course type
     for (const course of accountCourseType) {
         if (course.courseType === '2B') {
-            console.log(`[Monitor] Checking availability for course type: ${course.courseType}`);
+            console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
             await class2BcheckAvailability();
         } else if (course.courseType === '3') {
-            console.log(`[Monitor] Checking availability for course type: ${course.courseType}`);
+            console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
             await class3checkAvailability();
         }
     }
@@ -175,26 +200,27 @@ async function checkAvailability() {
 
 // Set up randomized recurring checks
 function scheduleNextCheck(interval = 1000) {
-    console.log(`[Monitor] Next check in ${(interval / 1000 / 60).toFixed(2)} minutes`);
+    console.tlog(`[Monitor] Next check in ${(interval / 1000 / 60).toFixed(2)} minutes`);
     availabilityID ??= setTimeout(checkAvailability, interval);
 }
 
 function initCourseSelection() {
     const vue = document.querySelector('#app').__vue__;
     if (vue.$store.state.user.courseType !== '') {
-        console.log('[Login] Course type already selected:', vue?.$store.state.user.courseType);
+        console.tlog('[Login] Course type already selected:', vue?.$store.state.user.courseType);
         return true;
     }
     const courseList = vue.$store.state.booking.activeCourseList;
     if (courseList.length === 0) {
-        console.error('[Login] No active course list found. Please ensure you are logged in.');
+        console.terror('[Login] No active course list found. Please ensure you are logged in.');
         return false;
     } else if (courseList.length === 1) {
+        console.tlog('[Login] Only one course type found, waiting for auto redirect.');
         return false; // Wait for auto redirect
     }
     for (const course of courseList) {
         if (course.canDoPracticalBooking){
-            console.log(`[Login] Selecting course type: ${course.courseType}`);
+            console.tlog(`[Login] Selecting course type: ${course.courseType}`);
             const {
                 accountBal: accountBal, 
                 enrExpiryDateStr: enrExpiryDateStr, 
@@ -217,7 +243,7 @@ function initCourseSelection() {
             return false; // Stop after selecting the first course type
         }
     }
-    console.error('[Login] No suitable course type found for practical booking.');
+    console.terror('[Login] No suitable course type found for practical booking.');
     return false; // No course type selected
 }
 
@@ -235,7 +261,7 @@ function getJsessionId() {
     try {
         return document.querySelector('#app').__vue__?.$store?.state?.user?.authToken || '';
     } catch (e) {
-        console.error('[Login] Failed to parse vuex:', e);
+        console.terror('[Login] Failed to parse vuex:', e);
         return '';
     }
 }
@@ -257,7 +283,7 @@ function setupMessage(body, tokenInHeader = true) {
         referrer: 'https://booking.bbdc.sg/',
         credentials: 'include',
         mode: "cors",
-        onerror: (err) => console.error('[Fetch] Request failed:', err),
+        onerror: (err) => console.terror('[Fetch] Request failed:', err),
     }
     return requestOptions;
 }
@@ -267,22 +293,22 @@ function setupMessage(body, tokenInHeader = true) {
 const availabilityMap = {};
 
 async function fetchAndProcessData(url, requestOptions) {
-    console.log('[Monitor] Sending request to:', url);
-    console.log('[Monitor] Request options:', requestOptions);
+    console.tlog('[Monitor] Sending request to:', url);
+    console.tlog('[Monitor] Request options:', requestOptions);
     try {
         const response = await fetch(url, requestOptions);
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         if (data?.message === 'No access token.') {
-            console.error('[Login] No access token found. Please log in to BBDC.');
-            console.log('[Fetch] Response data:', data);
+            console.terror('[Login] No access token found. Please log in to BBDC.');
+            console.tlog('[Fetch] Response data:', data);
             initializeID ??= setInterval(initializeWhenReady, 1000);
             return null;
         }
         return data;
     } catch (error) {
-        console.error('[Fetch] Fetch failed:', error);
+        console.terror('[Fetch] Fetch failed:', error);
         showErrorNotification(`[Fetch] Request failed: ${error.message}`);
         return null;
     }
@@ -299,10 +325,10 @@ async function class2BfindLastLesson() {
         })
     );
     if (requestOptions === null) return null; // If not logged in, return null
-    console.log('[Monitor] Sending request to find available lesson...');
+    console.tlog('[Monitor] Sending request to find available lesson...');
     const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
     if (data === null) return;
-    console.log('[Monitor] Available lessons data:', data);
+    console.tlog('[Monitor] Available lessons data:', data);
     const trainingList = data?.data?.practicalTrainings || [];
     const sorted_data = trainingList.filter(training => training.canDoBooking).sort((a, b) => {
         const aSubNo = parseFloat(a.subStageSubNo);
@@ -317,11 +343,11 @@ async function class2BcheckAvailability() {
     if (stageSubDesc === '' || stageSubNo === '' || subVehicleType === '') {
         const lastLesson = await class2BfindLastLesson();
         if (!lastLesson) {
-            console.error('[Monitor] No last lesson found, cannot proceed with availability check');
+            console.terror('[Monitor] No last lesson found, cannot proceed with availability check');
             showErrorNotification('No last lesson found, cannot proceed with availability check');
             throw new Error('No last lesson found');
         }
-        console.log('[Monitor] Using last lesson details:', lastLesson);
+        console.tlog('[Monitor] Using last lesson details:', lastLesson);
         stageSubDesc = lastLesson.subDesc;
         subVehicleType = lastLesson.subVehicleType;
         stageSubNo = lastLesson.subStageSubNo;
@@ -333,15 +359,15 @@ async function class2BcheckAvailability() {
         subVehicleType: subVehicleType,
         stageSubNo: stageSubNo,
     };
-    console.log('[Monitor] Checking availability for:', lesson);
+    console.tlog('[Monitor] Checking availability for:', lesson);
     const requestOptions = setupMessage(
         JSON.stringify(lesson)
     );
     if (requestOptions === null) return null; // If not logged in, return null
-    console.log('[Monitor] Sending request...');
+    console.tlog('[Monitor] Sending request...');
     const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
     if (data === null || !data.data?.releasedSlotListGroupByDay) {
-        console.error('[Monitor] Availability check failed:', data);
+        console.terror('[Monitor] Availability check failed:', data);
         document.querySelector('#app').__vue__.$router.push("/");
         scheduleNextCheck();
         return;
@@ -365,7 +391,7 @@ async function class2BcheckAvailability() {
         }
     }
 
-    console.log('[Monitor] Availability:', availabilityMap);
+    console.tlog('[Monitor] Availability:', availabilityMap);
     notifyAvailableSlots(availabilityMap);
 }
 
@@ -406,9 +432,9 @@ async function notifyAvailableSlots(availabilityMap) {
             `${availableSlots.join('\n')}`
         );
 
-        console.log('[Monitor] Available slots in range:', availableSlots);
+        console.tlog('[Monitor] Available slots in range:', availableSlots);
     } else {
-        console.log(`[Monitor] No${ONLY_SHOW_NEW ? ' new' : ''} available slots found in the specified date range`);
+        console.tlog(`[Monitor] No${ONLY_SHOW_NEW ? ' new' : ''} available slots found in the specified date range`);
     }
 }
 
@@ -432,10 +458,10 @@ async function class3checkAvailability() {
         })
     );
     if (requestOptions === null) return null; // If not logged in, return null
-    console.log('[Monitor] Sending request...');
+    console.tlog('[Monitor] Sending request...');
     const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
     if (data === null) return;
-    console.log('[Monitor] Response:', data);
+    console.tlog('[Monitor] Response:', data);
 
     if (data?.message !== 'There is no slot released for booking at the moment.') {
         await showNotification(
@@ -443,7 +469,7 @@ async function class3checkAvailability() {
             'Class 3 practical training slots are available for booking.'
         );
         sendTelegramNotification('Class 3 practical training slots are available for booking.');
-        console.log('[Monitor] Class 3 slots available:', data);
+        console.tlog('[Monitor] Class 3 slots available:', data);
     } else {
         if (debugging) {
             await showNotification(
@@ -452,7 +478,7 @@ async function class3checkAvailability() {
             );
             sendTelegramNotification('No Class 3 practical training slots available at the moment.');
         }
-        console.log('[Monitor] No Class 3 slots available at the moment.');
+        console.tlog('[Monitor] No Class 3 slots available at the moment.');
     }
 }
 
@@ -461,7 +487,7 @@ async function showNotification(title, message) {
     try {
         sendTelegramNotification(message);
     } catch (error) {
-        console.error("[Telegram] Error sending Telegram notification:", error);
+        console.terror("[Telegram] Error sending Telegram notification:", error);
     }
     if ('Notification' in window) {
         try {
@@ -478,12 +504,12 @@ async function showNotification(title, message) {
                 return;
             }
         } catch (e) {
-            console.error('[Monitor] Notification error:', e);
+            console.terror('[Monitor] Notification error:', e);
         }
     }
 
     // Fallback to alert()
-    console.log(`[Monitor] ${title}\n${message}`);
+    console.tlog(`[Monitor] ${title}\n${message}`);
     alert(`${title}\n${message}`);
 }
 
@@ -514,13 +540,13 @@ async function sendTelegramNotification(message) {
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        console.log(`[Telegram] Telegram notification sent successfully:\n${message}`);
+        console.tlog(`[Telegram] Telegram notification sent successfully:\n${message}`);
     } catch (error) {
-        console.error("[Telegram] Error sending Telegram notification:", error);
+        console.terror("[Telegram] Error sending Telegram notification:", error);
     }
 }
 
-async function login(){
+async function login(trySolve=true){
     const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/auth/checkIdAndPass';
     const requestOptions = setupMessage(
         JSON.stringify({
@@ -530,13 +556,22 @@ async function login(){
         false // No token in header for login request
     );
     if (requestOptions === null) return null; // If not logged in, return null
-    console.log('[Login] Sending login request...');
+    console.tlog('[Login] Sending login request...');
     const responseData = await fetchAndProcessData(REQUEST_URL, requestOptions);
-    console.log('[Captcha] Response:', responseData);
+    console.tlog('[Captcha] Response:', responseData);
 
-    const [captchaToken, verifyCodeId, processedImage] = await getCaptcha();
-    const captcha = await sendImageAndWaitForResponse(processedImage);
-    captchaLogin(captchaToken, verifyCodeId, captcha);
+    let [captchaToken, verifyCodeId, processedImage, captchaText] = await getCaptcha();
+    if (!trySolve || !captchaText || captchaText.length !== 5) {
+        captchaText = await sendImageAndWaitForResponse(processedImage);
+    } else {
+        await sendImageToTelegram(processedImage, `Captcha recognized as: ${captchaText}`);
+    }
+
+    return await new Promise((resolve) => {
+        setTimeout(async () => {
+            resolve(await captchaLogin(captchaToken, verifyCodeId, captchaText));
+        }, 5000);
+    });
 }
 
 async function getCaptcha() {
@@ -547,7 +582,7 @@ async function getCaptcha() {
     );
     if (requestOptions === null) return null; // If not logged in, return null
     const responseData = await fetchAndProcessData(REQUEST_URL, requestOptions);
-    console.log('[Captcha] Response:', responseData);
+    console.tlog('[Captcha] Response:', responseData);
     const base64Image = await responseData?.data?.image;
     const captchaToken = await responseData?.data?.captchaToken;
     const verifyCodeId = await responseData?.data?.verifyCodeId;
@@ -555,8 +590,31 @@ async function getCaptcha() {
         throw new Error('No image data received');
     }
     const processedImage = await preprocessCaptcha(base64Image);
-    showCaptchaImage(processedImage);
-    return [captchaToken, verifyCodeId, processedImage]
+    const captchaText = await tesseractRecognizeImage(processedImage);
+    console.tlog('[Captcha] Recognized text:', captchaText);
+
+    // Create canvas for processing
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Load image
+    const img = new Image();
+    img.src = base64Image;
+    const processedImg = new Image();
+    processedImg.src = processedImage;
+    await new Promise(resolve => {img.onload = resolve;});
+    await new Promise(resolve => {processedImg.onload = resolve;});
+
+    // Set canvas dimensions
+    canvas.width = img.width;
+    canvas.height = img.height * 2; // Double height for stacking
+
+    // Draw original image
+    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(processedImg, 0, img.height); // Draw processed image below original
+    const stackedImage = canvas.toDataURL('image/png');
+    showCaptchaImage(stackedImage);
+    return [captchaToken, verifyCodeId, stackedImage, captchaText]
 }
 
 async function preprocessCaptcha(base64Image) {
@@ -572,18 +630,19 @@ async function preprocessCaptcha(base64Image) {
         
         // Set canvas dimensions
         canvas.width = img.width;
-        canvas.height = img.height * 2; // Double height for stacking
+        canvas.height = img.height;
         
         // Draw original image
         ctx.drawImage(img, 0, 0);
-        ctx.drawImage(img, 0, img.height); // Stack the image
         
         // Step 1: Get image data and find dominant colors
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
         const colorCounts = {};
+        // initialize bounding boxes array
+        const boundingBoxes = [];
 
-        for (let i = 0; i < Math.floor(data.length / 2); i += 4) {
+        for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i+1];
             const b = data[i+2];
@@ -597,39 +656,113 @@ async function preprocessCaptcha(base64Image) {
             .sort((a, b) => b[1] - a[1])
             .slice(1, 6)
             .map(item => item[0].split(',').map(Number));
-        console.log('[Captcha] Top colors:', topColors);
+        console.tlog('[Captcha] Top colors:', topColors);
 
-        for (let i = Math.floor(data.length / 2); i < data.length; i += 4) {
+        for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i+1];
             const b = data[i+2];
-            let isTopColor = false;
+            let topColorIndex = -1;
             
             // Check if pixel matches any top color
-            for (const [tr, tg, tb] of topColors) {
+            for (const [index, [tr, tg, tb]] of topColors.entries()) {
                 if (r === tr && g === tg && b === tb) {
-                    isTopColor = true;
+                    topColorIndex = index;
                     break;
                 }
             }
-            
-            if (!isTopColor) {
+            if (topColorIndex === -1) {
                 // Set to white
                 data[i] = data[i+1] = data[i+2] = 255;
             } else {
-                // Set to black
-                data[i] = data[i+1] = data[i+2] = 0;
+                data[i] = topColorIndex;
+                if (!boundingBoxes[topColorIndex]) {
+                    boundingBoxes[topColorIndex] = {};
+                }
+                x = Math.floor((i / 4) % canvas.width);
+                y = Math.floor((i / 4) / canvas.width);
+                boundingBoxes[topColorIndex].x = Math.min(boundingBoxes[topColorIndex].x ?? x, x);
+                boundingBoxes[topColorIndex].y = Math.min(boundingBoxes[topColorIndex].y ?? y, y);
+                boundingBoxes[topColorIndex].maxX = Math.max(boundingBoxes[topColorIndex].maxX ?? x, x);
+                boundingBoxes[topColorIndex].maxY = Math.max(boundingBoxes[topColorIndex].maxY ?? y, y);
+                boundingBoxes[topColorIndex].index = topColorIndex;
             }
         }
+        for (const box of boundingBoxes) {
+            box.width = box.maxX - box.x + 1;
+            box.height = box.maxY - box.y + 1;
+            box.originalX = box.x;
+        }
+        boundingBoxes.sort((a, b) => a.x - b.x);
+        console.tlog('[Captcha] Bounding boxes:', boundingBoxes);
+
+        adjustBoundingBoxes(boundingBoxes, imageData.width);
+
+        separatedImageData = createSeparatedImage(imageData, boundingBoxes);
+
         // Return processed image as base64
-        ctx.putImageData(imageData, 0, 0);
+        ctx.putImageData(separatedImageData, 0, 0);
         const processedBase64 = canvas.toDataURL('image/png');
         return processedBase64;
 
     } catch (error) {
-        console.error('[Captcha] Error processing captcha image:', error);
+        console.terror('[Captcha] Error processing captcha image:', error);
         return base64Image; // Fallback to original image if processing fails
     }
+}
+
+function adjustBoundingBoxes(boundingBoxes, imgWidth) {
+    const totalWidth = boundingBoxes.reduce((sum, box) => sum + box.width, 0);
+    const minDistance = Math.floor((imgWidth - totalWidth) / (boundingBoxes.length + 1));
+    boundingBoxes[0].x = minDistance; // Ensure first box starts at minDistance
+    for (let i = 1; i < boundingBoxes.length; i++) {
+        const prevBox = boundingBoxes[i - 1];
+        const currBox = boundingBoxes[i];
+
+        const currentRightEdge = prevBox.x + prevBox.width;
+        const desiredPosition = currentRightEdge + minDistance;
+        const shift = desiredPosition - currBox.x;
+        currBox.x += shift;
+    }
+}
+
+function createSeparatedImage(originalImage, boundingBoxes) {
+    const width = originalImage.width;
+    const height = originalImage.height;
+    const originalData = originalImage.data;
+
+    // Calculate new width
+    const lastBox = boundingBoxes[boundingBoxes.length - 1];
+    const newWidth = Math.max(width, lastBox.x + lastBox.width);
+    const newImageData = new ImageData(newWidth, height);
+    const newData = newImageData.data;
+
+    // Fill with white background (optimized for pure white)
+    newData.fill(255);
+
+    // Copy each character to its new position
+    for (const box of boundingBoxes) {
+        for (let y = 0; y < box.height; y++) {
+            for (let x = 0; x < box.width; x++) {
+                const origX = box.originalX + x;
+                const origY = box.y + y;
+
+                // Only process if within original image bounds
+                if (origX < width && origY < height) {
+                    const origIndex = (origY * width + origX) * 4;
+                    const newIndex = ((box.y + y) * newWidth + (box.x + x)) * 4;
+
+                    if (originalData[origIndex] === box.index) {
+                        newData[newIndex] = 0;
+                        newData[newIndex + 1] = 0;
+                        newData[newIndex + 2] = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    return newImageData;
 }
 
 function showCaptchaImage(base64Image) {
@@ -644,21 +777,21 @@ async function sendImageAndWaitForResponse(base64ImageData) {
         const sentMessage = await sendImageToTelegram(base64ImageData);
         const messageId = sentMessage.result.message_id;
 
-        console.log('[Telegram] Image sent successfully. Message ID:', messageId);
+        console.tlog('[Telegram] Image sent successfully. Message ID:', messageId);
 
         // 2. Start checking for responses
         const response = await waitForTelegramResponse(messageId);
 
-        console.log('[Telegram] User responded:', response);
+        console.tlog('[Telegram] User responded:', response);
         return response;
     } catch (error) {
-        console.error('[Telegram] Error in sendImageAndWaitForResponse:', error);
+        console.terror('[Telegram] Error in sendImageAndWaitForResponse:', error);
         throw error;
     }
 }
 
 // Helper function to send image
-async function sendImageToTelegram(base64Data) {
+async function sendImageToTelegram(base64Data, text = 'Please log in again') {
     // Remove data URL prefix if present
     const base64Image = base64Data.replace(/^data:image\/\w+;base64,/, '');
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
@@ -668,7 +801,7 @@ async function sendImageToTelegram(base64Data) {
     const formData = new FormData();
     formData.append('chat_id', CHAT_ID);
     formData.append('photo', blob);
-    formData.append('caption', 'Please log in again');
+    formData.append('caption', text);
 
     const response = await fetch(url, {
         method: 'POST',
@@ -700,7 +833,7 @@ async function waitForTelegramResponse(originalMessageId, timeout = 24 * 60 * 60
             if (reply) {
                 if (Date.now() - startTime > 2 * 60 * 1000) {
                     sendTelegramNotification('Received reply, but more than 2 minutes has passed, please relogin');
-                    console.log('[Telegram] Received reply, but more than 2 minutes has passed, refreshing page...');
+                    console.tlog('[Telegram] Received reply, but more than 2 minutes has passed, refreshing page...');
                     window.location.reload();
                 } else {
                 return reply.message.text;
@@ -710,7 +843,7 @@ async function waitForTelegramResponse(originalMessageId, timeout = 24 * 60 * 60
             // Wait before checking again
             await new Promise(resolve => setTimeout(resolve, checkInterval));
         } catch (error) {
-            console.error('[Telegram] Error checking for replies:', error);
+            console.terror('[Telegram] Error checking for replies:', error);
             // Continue waiting despite errors
             await new Promise(resolve => setTimeout(resolve, checkInterval));
         }
@@ -753,6 +886,7 @@ function base64ToBlob(base64) {
 }
 
 async function captchaLogin(captchaToken, verifyCodeId, verifyCodeValue) {
+    console.tlog('[Login] Attempting captcha login with token:', verifyCodeValue);
     const vue = document.querySelector('#app').__vue__;
     const formData = {
         captchaToken: captchaToken,
@@ -768,9 +902,19 @@ async function captchaLogin(captchaToken, verifyCodeId, verifyCodeValue) {
         document.cookie = `bbdc-token=${encodeURIComponent(data.tokenContent)}`
         vue.$store.commit("user/set_loginInfo", {});
         vue.$router.push("/");
-        initializeID ??= setInterval(initializeWhenReady, 1000);
         return true;
     } else {
-        throw new Error(message);
+        trySolve = false; // Disable auto solving for next login attempt
+        return false;
+    }
+}
+
+async function tesseractRecognizeImage(base64Image) {
+    try {
+        const { data: { text } } = await worker.recognize(base64Image, );
+        return text.replace(/[^0-9a-z]/gi, '');
+    } catch (error) {
+        console.terror('[Tesseract] Error recognizing image:', error);
+        return '';
     }
 }
