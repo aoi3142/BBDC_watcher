@@ -71,7 +71,7 @@ const userInfo = {};
                         store.commit("user/set_authToken", userInfo.authToken);
                         store.commit("user/set_global_canDoBooking", true);
                         document.cookie = `bbdc-token=${encodeURIComponent(userInfo.cookie)}`;
-                        app.__vue__.$router.push("/");  // Wait for auto redirect
+                        app.__vue__.$router.push("/"); // Wait for auto redirect
                     }
                 }
             })
@@ -190,7 +190,7 @@ function initCourseSelection() {
             vue.$store.commit("user/set_global_canDoBooking", canDoBooking);
             vue.$store.commit("user/set_canDoPracticalBooking", canDoPracticalBooking);
             vue.$store.commit("user/set_showHandBookInd", handBookInd);
-            vue.$router.push("/");  // Wait for auto redirect
+            vue.$router.push("/"); // Wait for auto redirect
             return false; // Stop after selecting the first course type
         }
     }
@@ -222,10 +222,10 @@ function setupMessage(body, tokenInHeader = true) {
         'content-type': 'application/json',
     };
     if (tokenInHeader) {
-        headers['authorization'] = getAuthToken();
-        headers['jsessionid'] = getJsessionId();
+        headers.authorization = getAuthToken();
+        headers.jsessionid = getJsessionId();
     } else {
-        headers['jsessionid'] = '';
+        headers.jsessionid = '';
     }
     const requestOptions = {
         method: 'POST',
@@ -317,8 +317,11 @@ async function class2BcheckAvailability() {
     if (requestOptions === null) return null; // If not logged in, return null
     console.log('[Monitor] Sending request...');
     const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
-    if (data === null) return;
-    const slotsByDay = data?.data?.releasedSlotListGroupByDay || {};
+    if (data === null || !data.data?.releasedSlotListGroupByDay) {
+        document.querySelector('#app').__vue__.$router.push("/");
+        return;
+    }
+    const slotsByDay = data.data.releasedSlotListGroupByDay;
 
     for (const [date, slots] of Object.entries(slotsByDay)) {
         if (!availabilityMap[date]) {
@@ -540,7 +543,7 @@ async function preprocessCaptcha(base64Image) {
         // Load image
         const img = new Image();
         img.src = base64Image;
-        await new Promise(resolve => img.onload = resolve);
+        await new Promise(resolve => {img.onload = resolve;});
         
         // Set canvas dimensions
         canvas.width = img.width;
