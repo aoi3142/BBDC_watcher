@@ -360,7 +360,7 @@ async function class2BcheckAvailability() {
         stageSubNo: stageSubNo,
     };
     console.tlog('[Monitor] Checking availability for:', lesson);
-    const requestOptions = setupMessage(
+    let requestOptions = setupMessage(
         JSON.stringify(lesson)
     );
     if (requestOptions === null) return null; // If not logged in, return null
@@ -372,7 +372,23 @@ async function class2BcheckAvailability() {
         scheduleNextCheck();
         return;
     }
-    const slotsByDay = data.data.releasedSlotListGroupByDay;
+    let slotsByDay = data.data.releasedSlotListGroupByDay;
+    if (data?.data?.releasedSlotMonthList.length > 1) {
+        lesson.releasedSlotMonth = data.data.releasedSlotMonthList.sort((a, b) => {
+            return parseInt(a.slotMonthYm) - parseInt(b.slotMonthYm);
+        })[1].slotMonthYm; // Get the later month
+        requestOptions = setupMessage(
+            JSON.stringify(lesson)
+        );
+        const data2 = await new Promise((resolve) => {
+            setTimeout(async () => {
+                resolve(await fetchAndProcessData(REQUEST_URL, requestOptions));
+            }, 1000); // Wait 1 second before sending the second request
+        });
+        if (data2 !== null && data2.data?.releasedSlotListGroupByDay) {
+            slotsByDay = Object.assign(slotsByDay, data2.data.releasedSlotListGroupByDay);
+        }
+    }
 
     for (const [date, slots] of Object.entries(slotsByDay)) {
         if (!availabilityMap[date]) {
