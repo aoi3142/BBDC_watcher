@@ -496,39 +496,43 @@ async function class2BcheckAvailability() {
         }
     }
 
-    for (const [date, slots] of Object.entries(slotsByDay)) {
+    for ([date, slots] of Object.entries(slotsByDay)) {
+        date = date.split(' ')[0]; // Extract date part only
         if (!availabilityMap[date]) {
             availabilityMap[date] = {};
         }
         for (let sessionNo = 1; sessionNo <= 8; sessionNo++) {
             const slot = slots.find(s => s.c2psrSessionNo === sessionNo);
             if (slot) {
+                isAvailable = slot.bookingProgress === 'Available';
                 availabilityMap[date][sessionNo] = {
-                    isAvailable: slot.bookingProgress === 'Available',
+                    isAvailable: isAvailable,
                     startTime: slot.startTime,
                     endTime: slot.endTime,
-                    new: slot.bookingProgress === 'Available' && (!availabilityMap[date][sessionNo] || availabilityMap[date][sessionNo].isAvailable === false)
+                    new: isAvailable && (!availabilityMap[date][sessionNo] || !availabilityMap[date][sessionNo].isAvailable),
+                    taken: !isAvailable && availabilityMap[date][sessionNo] && availabilityMap[date][sessionNo].isAvailable,
                 };
             }
         }
     }
 
     console.tlog('[Monitor] Availability:', availabilityMap);
-    notifyAvailableSlots(availabilityMap);
+    await notifyAvailableSlots();
 }
 
-async function notifyAvailableSlots(availabilityMap) {
+async function notifyAvailableSlots() {
     const availableSlots = [];
+    const newAvailableSlots = [];
     const [startDate, endDate] = DATE_RANGE.map(d => new Date(d));
 
     // Sort dates chronologically before processing
     const sortedDates = Object.keys(availabilityMap).sort((a, b) => {
-        return new Date(a.split(' ')[0]) - new Date(b.split(' ')[0]);
+        return new Date(a) - new Date(b);
     });
 
     for (const dateStr of sortedDates) {
         const sessions = availabilityMap[dateStr];
-        const slotDate = new Date(dateStr.split(' ')[0]);
+        const slotDate = new Date(dateStr);
 
         if (slotDate >= startDate && slotDate <= endDate) {
             const formattedDate = slotDate.toISOString().split('T')[0];
@@ -539,21 +543,36 @@ async function notifyAvailableSlots(availabilityMap) {
                 const slotInfo = sessions[sessionNo];
                 const peak = weekend || sessionNo > 5;
                 if (slotInfo.isAvailable && sessionNo >= MIN_SESSION && (!weekend && sessionNo >= MIN_WEEKDAY_SESSION)) {
+                    const text = `${formattedDate} ${dayOfWeek}⏰${slotInfo.startTime} to ${slotInfo.endTime}${peak ? ' (Peak)' : ''}${sessionNo}`;
+                    availableSlots.push(text);
+                    if (slotInfo.new || slotInfo.taken) {
+                        changed = true; // Mark that we found new slots
+                    }
                     if (ONLY_SHOW_NEW && !slotInfo.new) continue; // Skip if not new and ONLY_SHOW_NEW is true
-                    availableSlots.push(
-                        `${formattedDate} ${dayOfWeek}⏰${slotInfo.startTime} to ${slotInfo.endTime}${peak ? ' (Peak)' : ''}`
-                    );
+                    newAvailableSlots.push(text);
                 }
             }
         }
     }
 
-    if (availableSlots.length > 0) {
+    if (ONLY_SHOW_NEW) {
+        if (newAvailableSlots.length > 0){
+            await showNotification(
+                `🎯 ${newAvailableSlots.length} New Slots Available!`,
+                `${newAvailableSlots.join('\n')}`,
+                availableSlots
+            );
+            console.tlog('[Monitor] New available slots in range:', newAvailableSlots);
+        }
+        // else if (changed) {
+        //     await sendTelegramNotification("Options updated", availableSlots, true);
+        // }
+    } else if (!ONLY_SHOW_NEW && availableSlots.length > 0) {
         await showNotification(
             `🎯 ${availableSlots.length} Slots Available!`,
-            `${availableSlots.join('\n')}`
+            `${availableSlots.join('\n')}`,
+            availableSlots
         );
-
         console.tlog('[Monitor] Available slots in range:', availableSlots);
     } else {
         console.tlog(`[Monitor] No${ONLY_SHOW_NEW ? ' new' : ''} available slots found in the specified date range`);
