@@ -473,7 +473,6 @@ async function class2BcheckAvailability() {
     if (data === null || !data.data?.releasedSlotListGroupByDay) {
         console.terror('[Monitor] Availability check failed:', data);
         document.querySelector('#app').__vue__.$router.push("/");
-        scheduleNextCheck();
         return;
     }
     let slotsByDay = data.data.releasedSlotListGroupByDay;
