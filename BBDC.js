@@ -480,16 +480,18 @@ async function class2BcheckAvailability() {
         lesson.releasedSlotMonth = data.data.releasedSlotMonthList.sort((a, b) => {
             return parseInt(a.slotMonthYm) - parseInt(b.slotMonthYm);
         })[1].slotMonthYm; // Get the later month
-        requestOptions = setupMessage(
-            JSON.stringify(lesson)
-        );
-        const data2 = await new Promise((resolve) => {
-            setTimeout(async () => {
-                resolve(await fetchAndProcessData(REQUEST_URL, requestOptions));
-            }, 1000); // Wait 1 second before sending the second request
-        });
-        if (data2 !== null && data2.data?.releasedSlotListGroupByDay) {
-            slotsByDay = Object.assign(slotsByDay, data2.data.releasedSlotListGroupByDay);
+        if (lesson.releasedSlotMonth.slice(0, 4) + '-' + lesson.releasedSlotMonth.slice(4) <= DATE_RANGE[1].substring(0, 7)) {
+            requestOptions = setupMessage(
+                JSON.stringify(lesson)
+            );
+            const data2 = await new Promise((resolve) => {
+                setTimeout(async () => {
+                    resolve(await fetchAndProcessData(REQUEST_URL, requestOptions));
+                }, 1000); // Wait 1 second before sending the second request
+            });
+            if (data2 !== null && data2.data?.releasedSlotListGroupByDay) {
+                slotsByDay = Object.assign(slotsByDay, data2.data.releasedSlotListGroupByDay);
+            }
         }
     }
 
