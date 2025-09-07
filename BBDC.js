@@ -26,6 +26,10 @@ const INTERVAL_MINUTES_MAX = 3;                     // Maximum refresh interval 
 const ONLY_SHOW_NEW = true;                         // Only show new available slots since last check
 
 // BBDC Booking Details
+
+const check2B = true;                        // Check for 2B practical lessons
+const check3C = false;                       // Check for 3C practical lessons
+
 // To find these values, inspect the network requests in your browser's developer tools, look for request listPracSlotReleased -> Payload
 // Leave these empty to automatically select the highest bookable subject
 let stageSubNo = '';                              // Subject code to monitor
@@ -257,23 +261,43 @@ async function checkAvailability() {
     }
 
     // Check availability for the specified course type
-    try {
-        for (const course of accountCourseType) {
-            if (course.courseType === '2B') {
+    for (const course of accountCourseType) {
+        if (course.courseType === '2B' && check2B) {
+            try {
+                switchCourse(null, '2B');
                 console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
-                await class2BcheckAvailability();
-            } else if (course.courseType === '3') {
-                console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
-                await class3checkAvailability();
+                await new Promise((resolve) => {
+                    setTimeout(async () => {
+                        resolve(await class2BcheckAvailability());
+                    }, 5000);
+                });
+            } catch (error) {
+                console.terror(error)
+                console.tlog(`[Monitor] Error in monitoring 2B, ${check_tries} tries left`);
+                check_tries -= 1;
+                if (check_tries <= 0) {
+                    await showNotification("Error in monitoring 2B", "Error in monitoring exceeded max tries. Please check manually.")
+                    throw error;
+                }
             }
-        }
-    } catch(error) {
-        console.terror(error)
-        console.tlog(`[Monitor] Error in monitoring, ${check_tries} tries left`);
-        check_tries -= 1;
-        if (check_tries <= 0) {
-            await showNotification("Error in monitoring", "Error in monitoring exceeded max tries. Please check manually.")
-            throw error;
+        } else if (course.courseType === '3C' && check3C) {
+            try {
+                switchCourse(null, '3C');
+                console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
+                await new Promise((resolve) => {
+                    setTimeout(async () => {
+                        resolve(await class3checkAvailability());
+                    }, 5000);
+                });
+            } catch (error) {
+                console.terror(error)
+                console.tlog(`[Monitor] Error in monitoring 3C, ${check_tries} tries left`);
+                check_tries -= 1;
+                if (check_tries <= 0) {
+                    await showNotification("Error in monitoring 3C", "Error in monitoring exceeded max tries. Please check manually.")
+                    throw error;
+                }
+            }
         }
     }
     scheduleNextCheck(randomizedInterval());
@@ -317,33 +341,61 @@ function initCourseSelection() {
 
         return false; // Wait for auto redirect
     }
-    for (const course of courseList) {
-        if (course.canDoPracticalBooking){
-            console.tlog(`[Login] Selecting course type: ${course.courseType}`);
-            const {
-                accountBal: accountBal,
-                enrExpiryDateStr: enrExpiryDateStr,
-                authToken: authToken,
-                courseActiveStatus: courseActiveStatus,
-                canDoBooking: canDoBooking,
-                canDoPracticalBooking: canDoPracticalBooking,
-                courseType: courseType,
-                handBookInd: handBookInd
-            } = course;
-            vue.$store.commit("user/set_courseType", courseType);
-            vue.$store.commit("user/set_accountBal", accountBal);
-            vue.$store.commit("user/set_expiryDate", enrExpiryDateStr);
-            vue.$store.commit("user/set_authToken", authToken);
-            vue.$store.commit("user/set_courseActiveStatus", courseActiveStatus);
-            vue.$store.commit("user/set_global_canDoBooking", canDoBooking);
-            vue.$store.commit("user/set_canDoPracticalBooking", canDoPracticalBooking);
-            vue.$store.commit("user/set_showHandBookInd", handBookInd);
-            vue.$router.push("/"); // Wait for auto redirect
-            return false; // Stop after selecting the first course type
-        }
+    if (check3C) {
+        switchCourse(null, '3C');
+    } else if (check2B) {
+        switchCourse(null, '2B');
+    } else {
+        console.terror('[Login] No suitable course type found for practical booking.');
+        return false; // No course type selected
     }
-    console.terror('[Login] No suitable course type found for practical booking.');
-    return false; // No course type selected
+}
+
+function switchCourse(index = null, courseName = ''){
+    const vue = document.querySelector('#app').__vue__;
+    if (vue.$store.state.user.userInfo.courseType === courseName) {
+        console.tlog('[Login] Course type already selected:', courseName);
+        return;
+    }
+    const courseList = vue.$store.state.booking.activeCourseList;
+    console.tlog(courseList);
+    if (index === null && courseName) {
+        index = courseList.map(item => item.courseType).indexOf(courseName);
+    }
+    console.log(index);
+    if (index === null){
+        throw new Error(`Course type ${courseName} not found in list ${courseList}`);
+    }
+    const course = courseList[index];
+    console.tlog(`[Login] Selecting course type: ${course.courseType}`);
+    const {
+        accountBal: accountBal,
+        enrExpiryDateStr: enrExpiryDateStr,
+        authToken: authToken,
+        courseActiveStatus: courseActiveStatus,
+        canDoBooking: canDoBooking,
+        canDoPracticalBooking: canDoPracticalBooking,
+        courseType: courseType,
+        handBookInd: handBookInd
+    } = course;
+    vue.$store.commit("user/set_courseType", courseType);
+    vue.$store.commit("user/set_accountBal", accountBal);
+    vue.$store.commit("user/set_expiryDate", enrExpiryDateStr);
+    vue.$store.commit("user/set_authToken", authToken);
+    vue.$store.commit("user/set_courseActiveStatus", courseActiveStatus);
+    vue.$store.commit("user/set_global_canDoBooking", canDoBooking);
+    vue.$store.commit("user/set_canDoPracticalBooking", canDoPracticalBooking);
+    vue.$store.commit("user/set_showHandBookInd", handBookInd);
+    vue.$router.push("/"); // Wait for auto redirect
+
+    // Fallback refresh the page if not auto-redirected
+    if (refreshTimeoutId !== null) {
+        clearTimeout(refreshTimeoutId);
+    }
+    console.tlog('[Login] Scheduling a refresh for 5 minutes in case auto redirect fails.');
+    refreshTimeoutId = setTimeout(() => {
+        location.reload(); // Refresh the page
+    }, 5 * 60 * 1000); // 5 minutes in milliseconds
 }
 
 function isLoggedIn() {
@@ -389,7 +441,8 @@ function setupMessage(body, tokenInHeader = true) {
 
 // === MAIN FUNCTIONS ===
 // GLobal vars
-const availabilityMap = {};
+const availabilityMap2B = {};
+const availabilityMap3C = {};
 
 async function fetchAndProcessData(url, requestOptions, tries=3) {
     console.tlog('[Monitor] Sending request to:', url);
@@ -479,6 +532,11 @@ async function class2BcheckAvailability() {
         return;
     }
     let slotsByDay = data.data.releasedSlotListGroupByDay;
+    if (slotsByDay === null) {
+        console.tlog('[Monitor] No Class 2B slots available at the moment.');
+        availabilityMap2B = {}; // Clear previous availability map
+        return;
+    }
     if (data?.data?.releasedSlotMonthList.length > 1) {
         lesson.releasedSlotMonth = data.data.releasedSlotMonthList.sort((a, b) => {
             return parseInt(a.slotMonthYm) - parseInt(b.slotMonthYm);
@@ -500,19 +558,19 @@ async function class2BcheckAvailability() {
 
     for ([date, slots] of Object.entries(slotsByDay)) {
         date = date.split(' ')[0]; // Extract date part only
-        if (!availabilityMap[date]) {
-            availabilityMap[date] = {};
+        if (!availabilityMap2B[date]) {
+            availabilityMap2B[date] = {};
         }
         for (let sessionNo = 1; sessionNo <= 8; sessionNo++) {
             const slot = slots.find(s => s.c2psrSessionNo === sessionNo);
             if (slot) {
                 isAvailable = slot.bookingProgress === 'Available';
-                availabilityMap[date][sessionNo] = {
+                availabilityMap2B[date][sessionNo] = {
                     isAvailable: isAvailable,
                     startTime: slot.startTime,
                     endTime: slot.endTime,
-                    new: isAvailable && (!availabilityMap[date][sessionNo] || !availabilityMap[date][sessionNo].isAvailable),
-                    taken: !isAvailable && availabilityMap[date][sessionNo] && availabilityMap[date][sessionNo].isAvailable,
+                    new: isAvailable && (!availabilityMap2B[date][sessionNo] || !availabilityMap2B[date][sessionNo].isAvailable),
+                    taken: !isAvailable && availabilityMap2B[date][sessionNo] && availabilityMap2B[date][sessionNo].isAvailable,
                     slotId: slot.slotId,
                     slotIdEnc: slot.slotIdEnc,
                     bookingProgressEnc: slot.bookingProgressEnc,
@@ -524,15 +582,15 @@ async function class2BcheckAvailability() {
         }
     }
 
-    console.tlog('[Monitor] Availability:', availabilityMap);
-    await notifyAvailableSlots();
+    console.tlog('[Monitor] 2B Availability:', availabilityMap2B);
+    await notifyAvailableSlots(availabilityMap2B);
     if (tryBook) {
         waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
             const text = response?.message?.text || '';
             if (text) {
                 const date = text.split(' ')[0];
                 const startTime = text.split('⏰')[1]?.split(' ')[0];
-                const slot = Object.values(availabilityMap[date]).find(slot => slot.startTime === startTime);
+                const slot = Object.values(availabilityMap2B[date]).find(slot => slot.startTime === startTime);
                 if (slot && slot.isAvailable) {
                     console.tlog('[Booking] User trying to book', slot);
                     await book2BPracticalSlot(slot);
@@ -637,7 +695,7 @@ async function book2BPracticalSlot(slot) {
         return;
     }
     const date = slot.slotRefDate.split(' ')[0];
-    const slotList = Object.values(availabilityMap[date]);
+    const slotList = Object.values(availabilityMap2B[date]);
     if (!slotList.some(s => s.slotId === slot.slotId && s.isAvailable)) {
         console.terror('[Booking] Slot not found in availability map');
         await sendTelegramNotification(
@@ -708,7 +766,7 @@ async function cancel2BPracticalBooking(slotId) {
     }
 }
 
-async function notifyAvailableSlots() {
+async function notifyAvailableSlots(availabilityMap) {
     const availableSlots = [];
     const newAvailableSlots = [];
     const [startDate, endDate] = DATE_RANGE.map(d => new Date(d));
@@ -815,25 +873,77 @@ async function class3checkAvailability() {
     if (requestOptions === null) return null; // If not logged in, return null
     console.tlog('[Monitor] Sending request...');
     const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
-    if (data === null) return;
-    console.tlog('[Monitor] Response:', data);
-
-    if (data?.message !== 'There is no slot released for booking at the moment.') {
-        await showNotification(
-            '🎯 Class 3 Slots Available!',
-            'Class 3 practical training slots are available for booking.'
-        );
-        sendTelegramNotification('Class 3 practical training slots are available for booking.');
-        console.tlog('[Monitor] Class 3 slots available:', data);
-    } else {
-        if (debugging) {
-            await showNotification(
-                '⚠️ Class 3 Slots Unavailable',
-                'No Class 3 practical training slots available at the moment.'
-            );
-            sendTelegramNotification('No Class 3 practical training slots available at the moment.');
-        }
+    if (data === null) {
+        console.terror('[Monitor] Availability check failed:', data);
+        document.querySelector('#app').__vue__.$router.push("/");
+        return;
+    }
+    let slotsByDay = data.data.releasedSlotListGroupByDay;
+    if (slotsByDay === null) {
         console.tlog('[Monitor] No Class 3 slots available at the moment.');
+        availabilityMap3C = {}; // Clear previous availability map
+        return;
+    }
+    if (data?.data?.releasedSlotMonthList.length > 1) {
+        lesson.releasedSlotMonth = data.data.releasedSlotMonthList.sort((a, b) => {
+            return parseInt(a.slotMonthYm) - parseInt(b.slotMonthYm);
+        })[1].slotMonthYm; // Get the later month
+        if (lesson.releasedSlotMonth.slice(0, 4) + '-' + lesson.releasedSlotMonth.slice(4) <= DATE_RANGE[1].substring(0, 7)) {
+            requestOptions = setupMessage(
+                JSON.stringify(lesson)
+            );
+            const data2 = await new Promise((resolve) => {
+                setTimeout(async () => {
+                    resolve(await fetchAndProcessData(REQUEST_URL, requestOptions));
+                }, 1000); // Wait 1 second before sending the second request
+            });
+            if (data2 !== null && data2.data?.releasedSlotListGroupByDay) {
+                slotsByDay = Object.assign(slotsByDay, data2.data.releasedSlotListGroupByDay);
+            }
+        }
+    }
+
+    for ([date, slots] of Object.entries(slotsByDay)) {
+        date = date.split(' ')[0]; // Extract date part only
+        if (!availabilityMap3C[date]) {
+            availabilityMap3C[date] = {};
+        }
+        for (let sessionNo = 1; sessionNo <= 8; sessionNo++) {
+            const slot = slots.find(s => s.c2psrSessionNo === sessionNo);
+            if (slot) {
+                isAvailable = slot.bookingProgress === 'Available';
+                availabilityMap3C[date][sessionNo] = {
+                    isAvailable: isAvailable,
+                    startTime: slot.startTime,
+                    endTime: slot.endTime,
+                    new: isAvailable && (!availabilityMap3C[date][sessionNo] || !availabilityMap3C[date][sessionNo].isAvailable),
+                    taken: !isAvailable && availabilityMap3C[date][sessionNo] && availabilityMap3C[date][sessionNo].isAvailable,
+                    slotId: slot.slotId,
+                    slotIdEnc: slot.slotIdEnc,
+                    bookingProgressEnc: slot.bookingProgressEnc,
+                    startTime: slot.startTime,
+                    totalFee: slot.totalFee,
+                    slotRefDate: slot.slotRefDate.split(' ')[0]
+                };
+            }
+        }
+    }
+
+    console.tlog('[Monitor] 3C Availability:', availabilityMap3C);
+    await notifyAvailableSlots(availabilityMap3C);
+    if (tryBook) {
+        waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
+            const text = response?.message?.text || '';
+            if (text) {
+                const date = text.split(' ')[0];
+                const startTime = text.split('⏰')[1]?.split(' ')[0];
+                const slot = Object.values(availabilityMap3C[date]).find(slot => slot.startTime === startTime);
+                if (slot && slot.isAvailable) {
+                    console.tlog('[Booking] User trying to book', slot);
+                    // await book2BPracticalSlot(slot);
+                }
+            }
+        }, false);
     }
 }
 
