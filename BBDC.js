@@ -35,6 +35,8 @@ let subVehicleType = '';                          // Vehicle type, e.g., 'Circui
 // const stageSubDesc = 'Subject 3.2';
 // const subVehicleType = 'Circuit';
 
+let tryBook = false; // Try to book when a slot is available
+
 const sleep_time = ["0038","1037"]
 
 // Global vars, do not touch
@@ -511,6 +513,12 @@ async function class2BcheckAvailability() {
                     endTime: slot.endTime,
                     new: isAvailable && (!availabilityMap[date][sessionNo] || !availabilityMap[date][sessionNo].isAvailable),
                     taken: !isAvailable && availabilityMap[date][sessionNo] && availabilityMap[date][sessionNo].isAvailable,
+                    slotId: slot.slotId,
+                    slotIdEnc: slot.slotIdEnc,
+                    bookingProgressEnc: slot.bookingProgressEnc,
+                    startTime: slot.startTime,
+                    totalFee: slot.totalFee,
+                    slotRefDate: slot.slotRefDate.split(' ')[0]
                 };
             }
         }
@@ -518,6 +526,186 @@ async function class2BcheckAvailability() {
 
     console.tlog('[Monitor] Availability:', availabilityMap);
     await notifyAvailableSlots();
+    if (tryBook) {
+        waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
+            const text = response?.message?.text || '';
+            if (text) {
+                const date = text.split(' ')[0];
+                const startTime = text.split('⏰')[1]?.split(' ')[0];
+                const slot = Object.values(availabilityMap[date]).find(slot => slot.startTime === startTime);
+                if (slot && slot.isAvailable) {
+                    console.tlog('[Booking] User trying to book', slot);
+                    await book2BPracticalSlot(slot);
+                }
+            }
+        }, false);
+    }
+}
+
+async function noActive2BpracticalBooking() {
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/c2practical/checkExistsActivePracticalBooking';
+    const requestOptions = setupMessage(
+        JSON.stringify({
+            stageSubNo: stageSubNo
+        })
+    );
+    console.tlog('[Booking] Sending request to check active booking...');
+    const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
+    console.tlog('[Booking] Active booking check response:', data);
+    return data?.message === 'Nothing';
+}
+
+async function class2BcheckClash(slotList) {
+    const date = slotList[0].slotRefDate.split(' ')[0];
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/manage/updateSlotListClashStatus';
+    const requestOptions = setupMessage(
+        JSON.stringify({
+            releasedSlotDate: date,
+            slotIdList: slotList
+                .filter(slot => slot.isAvailable)
+                .map(slot => slot.slotId),
+            bookingType: 'Practical',
+            subVehicleType: subVehicleType
+        })
+    );
+    console.tlog('[Booking] Sending clash check request', requestOptions);
+    const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
+    if (data === null) return;
+    console.tlog('[Booking] Clash check response:', data);
+    const clashStatus = data.data?.updateClashStatusList.map(slot => ({
+        slotId: slot.slotId,
+        clash: slot.clashedFlag
+    })) || [];
+    return clashStatus;
+}
+
+async function getCaptchaImage() {
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/manage/getCaptchaImage';
+    const requestOptions = setupMessage('{}');
+    console.tlog('[Captcha] Sending request to get captcha image...');
+    const responseData = await fetchAndProcessData(REQUEST_URL, requestOptions);
+    console.tlog('[Captcha] Response:', responseData);
+    const data = await responseData?.data;
+    if (!(await data?.image)) {
+        throw new Error('No image data received');
+    }
+    return data;
+}
+
+async function callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, slot) {
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/c2practical/callBookPracticalSlot';
+    const requestOptions = setupMessage(
+        JSON.stringify({
+            courseType: '2B',
+            slotIdList: [slot.slotId],
+            encryptSlotList: [{
+                slotIdEnc: slot.slotIdEnc,
+                bookingProgressEnc: slot.bookingProgressEnc
+            }],
+            verifyCodeId: verifyCodeId,
+            verifyCodeValue: captchaText,
+            captchaToken: captchaToken,
+            insInstructorId: '',
+            subVehicleType: subVehicleType
+        })
+    );
+    console.tlog('[Booking] Sending booking request...');
+    const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
+    if (data === null) return;
+    console.tlog('[Booking] Booking response:', data);
+    if (data?.success) {
+        await showNotification(
+            '🎉 Booking Successful!',
+            `Your booking for ${slot.startTime} on ${slot.slotRefDate} (\$${slot.totalFee.toFixed(2)}) has been confirmed.`
+        );
+    } else {
+        await showNotification(
+            '⚠️ Booking Failed',
+            `Booking failed: ${data?.message || 'Unknown error'}\nManual intervention required.`
+        );
+        disabled = true; // Disable further actions
+    }
+}
+
+async function book2BPracticalSlot(slot) {
+    const canBook = await noActive2BpracticalBooking();
+    if (!canBook) {
+        console.terror('[Booking] Cannot book, active booking exists');
+        await sendTelegramNotification(
+            'You have an active booking for a 2B practical lesson. Please cancel it before proceeding.'
+        );
+        return;
+    }
+    const date = slot.slotRefDate.split(' ')[0];
+    const slotList = Object.values(availabilityMap[date]);
+    if (!slotList.some(s => s.slotId === slot.slotId && s.isAvailable)) {
+        console.terror('[Booking] Slot not found in availability map');
+        await sendTelegramNotification(
+            `The selected slot (${slot.slotId}) is not available for booking. Please try again later.`
+        );
+        return;
+    }
+    const clashStatus = await class2BcheckClash(slotList);
+    console.tlog('[Booking] Clash status:', clashStatus);
+    if (clashStatus.some(s => s.clash)) {
+        console.terror('[Booking] Booking clash detected, cannot proceed with booking');
+        await sendTelegramNotification(
+            'Booking clash detected, do you have another booking for this slot? Please cancel it before proceeding.'
+        );
+        return;
+    }
+    const captchaData = await getCaptchaImage();
+    const [captchaToken, verifyCodeId, captchaText] = await dealWithCaptcha(captchaData);
+    await callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, slot);
+}
+
+async function list2Bbookings() {
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/manage/listAllPracticalBooking';
+    const requestOptions = setupMessage(JSON.stringify({
+        courseType: '2B'
+    }));
+    if (requestOptions === null) return null; // If not logged in, return null
+    console.tlog('[Booking] Sending request...');
+    const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
+    console.tlog('[Booking] Booking response:', data);
+    return data?.data?.theoryActiveBookingList;
+}
+
+async function cancel2BPracticalBooking(slotId) {
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/manage/cancelBooking';
+    const requestOptions = setupMessage(
+        JSON.stringify({
+            bookingId: slotId,
+            manageType: 'Practical'
+        })
+    );
+    if (requestOptions === null) return null; // If not logged in, return null
+    console.tlog('[Booking] Sending request to cancel booking...');
+    const data = await fetchAndProcessData(REQUEST_URL, requestOptions);
+    console.tlog('[Booking] Cancel booking response:', data);
+    if (data?.success) {
+        // Verify that the booking was cancelled
+        const bookings = await list2Bbookings();
+        if (bookings && bookings.some(booking => booking.slotId === slotId)) {
+            console.terror('[Booking] Booking cancellation failed, booking still exists');
+            await showNotification(
+                '⚠️ Cancel Booking Failed',
+                `Failed to cancel booking: ${data?.message || 'Unknown error'}\nManual intervention required.`
+            );
+            disabled = true; // Disable further actions
+            return;
+        }
+        await showNotification(
+            '🎉 Booking Cancelled',
+            `Your booking for slot ID ${slotId} has been cancelled successfully.`
+        );
+    } else {
+        await showNotification(
+            '⚠️ Cancel Booking Failed',
+            `Failed to cancel booking: ${data?.message || 'Unknown error'}\nManual intervention required.`
+        );
+        disabled = true; // Disable further actions
+    }
 }
 
 async function notifyAvailableSlots() {
@@ -576,6 +764,32 @@ async function notifyAvailableSlots() {
         console.tlog('[Monitor] Available slots in range:', availableSlots);
     } else {
         console.tlog(`[Monitor] No${ONLY_SHOW_NEW ? ' new' : ''} available slots found in the specified date range`);
+    }
+}
+
+async function deleteTelegramMessage(res) {
+    if (!res || !res.result || !res.result.message_id) {
+        console.terror('[Telegram] Invalid response for deleting message:', res);
+        return;
+    }
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/deleteMessage`;
+    const body = {
+        chat_id: CHAT_ID,
+        message_id: res.result.message_id
+    };
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+    } catch (error) {
+        console.terror("[Telegram] Error deleting message:", error);
     }
 }
 
