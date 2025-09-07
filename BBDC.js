@@ -388,7 +388,7 @@ function setupMessage(body, tokenInHeader = true) {
 // GLobal vars
 const availabilityMap = {};
 
-async function fetchAndProcessData(url, requestOptions) {
+async function fetchAndProcessData(url, requestOptions, tries=3) {
     console.tlog('[Monitor] Sending request to:', url);
     console.tlog('[Monitor] Request options:', requestOptions);
     try {
@@ -396,15 +396,23 @@ async function fetchAndProcessData(url, requestOptions) {
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        if (data?.message === 'No access token.') {
+        if (data?.message === 'No access token.' || data?.message === 'Token expired.') {
             console.terror('[Login] No access token found. Please log in to BBDC.');
             console.tlog('[Fetch] Response data:', data);
-            initializeID ??= setInterval(initializeWhenReady, 1000);
+            // initializeID ??= setInterval(initializeWhenReady, 1000);
+            location.reload(true);
             return null;
         }
         return data;
     } catch (error) {
         console.terror('[Fetch] Fetch failed:', error);
+        if (tries > 0) {
+            tries = tries - 1;
+            console.terror(`[Fetch] Trying fetch (${tries} tries left).`, error);
+            const retry_data = await fetchAndProcessData(url, requestOptions, tries=tries);
+            return retry_data;
+        }
+        console.terror('[Fetch] No more tries available.', error);
         showErrorNotification(`[Fetch] Request failed: ${error.message}`);
         return null;
     }
