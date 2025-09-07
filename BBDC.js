@@ -900,10 +900,16 @@ async function sendImageAndWaitForResponse(base64ImageData) {
         console.tlog('[Telegram] Image sent successfully. Message ID:', messageId);
 
         // 2. Start checking for responses
-        const response = await waitForTelegramResponse(messageId);
+        const response = await waitForTelegramResponse(sentMessage);
+        if (response === null) {
+            sendTelegramNotification('Received reply, but more than 2 minutes has passed, please relogin');
+            console.tlog('[Telegram] Received reply, but more than 2 minutes has passed, refreshing page...');
+            window.location.reload();
+        }
+        const text = response?.message?.text
 
-        console.tlog('[Telegram] User responded:', response);
-        return response;
+        console.tlog('[Telegram] User responded:', text);
+        return text;
     } catch (error) {
         console.terror('[Telegram] Error in sendImageAndWaitForResponse:', error);
         throw error;
