@@ -49,6 +49,7 @@ let disabled = false;
 let trySolve = true;
 
 let login_tries = 3;
+let check_tries = 3;
 
 (function() {
     'use strict';
@@ -251,13 +252,23 @@ async function checkAvailability() {
     }
 
     // Check availability for the specified course type
-    for (const course of accountCourseType) {
-        if (course.courseType === '2B') {
-            console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
-            await class2BcheckAvailability();
-        } else if (course.courseType === '3') {
-            console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
-            await class3checkAvailability();
+    try {
+        for (const course of accountCourseType) {
+            if (course.courseType === '2B') {
+                console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
+                await class2BcheckAvailability();
+            } else if (course.courseType === '3') {
+                console.tlog(`[Monitor] Checking availability for course type: ${course.courseType}`);
+                await class3checkAvailability();
+            }
+        }
+    } catch(error) {
+        console.terror(error)
+        console.tlog(`[Monitor] Error in monitoring, ${check_tries} tries left`);
+        check_tries -= 1;
+        if (check_tries <= 0) {
+            await showNotification("Error in monitoring", "Error in monitoring exceeded max tries. Please check manually.")
+            throw error;
         }
     }
     scheduleNextCheck(randomizedInterval());
