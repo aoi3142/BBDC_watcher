@@ -605,9 +605,9 @@ async function class3checkAvailability() {
 }
 
 // === UNIVERSAL NOTIFICATION FUNCTION ===
-async function showNotification(title, message) {
+async function showNotification(title, message, options = []) {
     try {
-        await sendTelegramNotification(message);
+        await sendTelegramNotification(message, options);
     } catch (error) {
         console.terror("[Telegram] Error sending Telegram notification:", error);
     }
@@ -636,7 +636,7 @@ async function showNotification(title, message) {
 }
 
 // Function to send Telegram notification
-async function sendTelegramNotification(message, silent = false) {
+async function sendTelegramNotification(message, options = [], silent = false) {
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
     if (!BOT_TOKEN || !CHAT_ID) {
@@ -652,6 +652,14 @@ async function sendTelegramNotification(message, silent = false) {
         text: message,
         silent: silent
     };
+
+    if (options.length > 0) {
+        body.reply_markup = {
+            keyboard: options.map(option => [{ text: option }]),
+            one_time_keyboard: true,
+            resize_keyboard: true
+        };
+    }
 
     try {
         const response = await fetch(url, {
