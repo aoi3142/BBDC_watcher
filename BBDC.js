@@ -48,6 +48,8 @@ const worker = await Tesseract.createWorker('eng');
 let disabled = false;
 let trySolve = true;
 
+let login_tries = 3;
+
 (function() {
     'use strict';
 
@@ -156,7 +158,22 @@ async function initializeWhenReady() {
             console.tlog('[Login] Attempting to log in...');
             clearInterval(initializeID);
             initializeID = null;
-            if (await login(trySolve)) {
+            let login_result;
+            while (login_tries > 0){
+                try {
+                    login_result = await login(trySolve);
+                    break;
+                } catch (error) {
+                    console.terror(error);
+                    console.tlog(`[Login] Error in login, ${login_tries} tries left`);
+                    login_tries -= 1;
+                    if (login_tries <= 0) {
+                        await showNotification("Error in login", "Error in login exceeded max tries. Please check manually.")
+                        throw error;
+                    }
+                }
+            }
+            if (login_result) {
                 console.tlog('[Login] Login done');
                 trySolve = true;
                 initializeID ??= setInterval(initializeWhenReady, 1000);
