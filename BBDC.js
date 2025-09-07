@@ -42,6 +42,7 @@ let logged_in = true;
 let lastCheckTime = null; // Track last check time
 let initializeID;
 let availabilityID;
+let lastTelegramMessageRes = null;
 let clickedLogout = false; // Track if logout button was clicked
 const userInfo = {};
 const worker = await Tesseract.createWorker('eng');
@@ -606,7 +607,7 @@ async function class3checkAvailability() {
 // === UNIVERSAL NOTIFICATION FUNCTION ===
 async function showNotification(title, message) {
     try {
-        sendTelegramNotification(message);
+        await sendTelegramNotification(message);
     } catch (error) {
         console.terror("[Telegram] Error sending Telegram notification:", error);
     }
@@ -635,7 +636,7 @@ async function showNotification(title, message) {
 }
 
 // Function to send Telegram notification
-async function sendTelegramNotification(message) {
+async function sendTelegramNotification(message, silent = false) {
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
     if (!BOT_TOKEN || !CHAT_ID) {
@@ -646,17 +647,21 @@ async function sendTelegramNotification(message) {
         message = "BBDC: empty message";
     }
 
+    const body = {
+        chat_id: CHAT_ID,
+        text: message,
+        silent: silent
+    };
+
     try {
         const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                chat_id: CHAT_ID,
-                text: message
-            })
+            body: JSON.stringify(body)
         });
+        lastTelegramMessageRes = await response.json();
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -681,18 +686,33 @@ async function login(trySolve=true){
     const responseData = await fetchAndProcessData(REQUEST_URL, requestOptions);
     console.tlog('[Captcha] Response:', responseData);
 
-    let [captchaToken, verifyCodeId, processedImage, captchaText] = await getCaptcha();
-    if (!trySolve || !captchaText || captchaText.length !== 5) {
-        captchaText = await sendImageAndWaitForResponse(processedImage);
-    } else {
-        await sendImageToTelegram(processedImage, `Captcha recognized as: ${captchaText}`);
-    }
+    const data = await getCaptcha();
+    const [captchaToken, verifyCodeId, captchaText] = await dealWithCaptcha(data);
 
     return await new Promise((resolve) => {
         setTimeout(async () => {
             resolve(await captchaLogin(captchaToken, verifyCodeId, captchaText));
-        }, 5000);
+        }, 1000);
     });
+}
+
+async function dealWithCaptcha(data) {
+    const base64Image = data?.image;
+    const captchaToken = data?.captchaToken;
+    const verifyCodeId = data?.verifyCodeId;
+    if (!base64Image) {
+        throw new Error('No image data received');
+    }
+    let [processedImage, captchaText] = await trySolveAndShowCaptcha(base64Image);
+    if (!trySolve || !captchaText || captchaText.length !== 5) {
+        captchaText = await sendImageAndWaitForResponse(processedImage);
+        console.tlog(`[Telegram] Recieved captcha reply from user: ${captchaText}`);
+    } else {
+        try{
+            sendImageToTelegram(processedImage, `Captcha recognized as: ${captchaText}`);
+        } catch (error) {}
+    }
+    return [captchaToken, verifyCodeId, captchaText];
 }
 
 async function getCaptcha() {
@@ -704,12 +724,10 @@ async function getCaptcha() {
     if (requestOptions === null) return null; // If not logged in, return null
     const responseData = await fetchAndProcessData(REQUEST_URL, requestOptions);
     console.tlog('[Captcha] Response:', responseData);
-    const base64Image = await responseData?.data?.image;
-    const captchaToken = await responseData?.data?.captchaToken;
-    const verifyCodeId = await responseData?.data?.verifyCodeId;
-    if (!base64Image) {
-        throw new Error('No image data received');
-    }
+    return responseData?.data;
+}
+
+async function trySolveAndShowCaptcha(base64Image) {
     const processedImage = await preprocessCaptcha(base64Image);
     const captchaText = await tesseractRecognizeImage(processedImage);
     console.tlog('[Captcha] Recognized text:', captchaText);
@@ -735,7 +753,7 @@ async function getCaptcha() {
     ctx.drawImage(processedImg, 0, img.height); // Draw processed image below original
     const stackedImage = canvas.toDataURL('image/png');
     showCaptchaImage(stackedImage);
-    return [captchaToken, verifyCodeId, stackedImage, captchaText]
+    return [stackedImage, captchaText]
 }
 
 async function preprocessCaptcha(base64Image) {
@@ -918,7 +936,7 @@ async function sendImageAndWaitForResponse(base64ImageData) {
 }
 
 // Helper function to send image
-async function sendImageToTelegram(base64Data, text = 'Please log in again') {
+async function sendImageToTelegram(base64Data, text = 'Please log in again', tries=3) {
     // Remove data URL prefix if present
     const base64Image = base64Data.replace(/^data:image\/\w+;base64,/, '');
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
@@ -935,17 +953,28 @@ async function sendImageToTelegram(base64Data, text = 'Please log in again') {
         body: formData
     });
 
+    lastTelegramMessageRes = await response.json();
+
     if (!response.ok) {
+        if (tries >= 0) {
+            tries = tries - 1;
+            console.terror(`[Telegram] Trying fetch (${tries} tries left).`, lastTelegramMessageRes);
+            const retry_data = await sendImageToTelegram(base64Data, text, tries=tries);
+            return retry_data;
+        }
+        console.terror('[Telegram] No more tries available.', lastTelegramMessageRes);
         throw new Error(`Failed to send image: ${response.status}`);
     }
-
-    return response.json();
+    return lastTelegramMessageRes;
 }
 
 // Helper function to wait for user response
-async function waitForTelegramResponse(originalMessageId, timeout = 24 * 60 * 60 * 1000) {
+async function waitForTelegramResponse(response, callback = null, lookForReplyOnly=true, timeout = 24 * 60 * 60 * 1000, maxWaitTime = 2 * 60 * 1000, checkInterval = 10 * 1000) {
+    originalMessageId = response?.result?.message_id;
+    if (originalMessageId < lastTelegramMessageRes?.result?.message_id) {
+        return null; // Already processed this message
+    }
     const startTime = Date.now();
-    const checkInterval = 3000; // Check every 3 seconds
 
     while (Date.now() - startTime < timeout) {
         try {
@@ -953,17 +982,30 @@ async function waitForTelegramResponse(originalMessageId, timeout = 24 * 60 * 60
             const updates = await getBotUpdates();
 
             // Find replies to our original message
-            const reply = updates.result.find(update =>
-                update.message?.reply_to_message?.message_id === originalMessageId
-            );
+            let reply;
+            if (lookForReplyOnly) {
+                reply = updates.result.find(update =>
+                    update.message?.reply_to_message?.message_id === originalMessageId
+                );
+            } else {
+                reply = updates.result
+                    .filter(update => update.message?.message_id > originalMessageId)
+                    .sort((a, b) => a.message?.message_id - b.message?.message_id);
+                if (reply.length > 0) {
+                    reply = reply[0]; // Get the text of the first reply
+                } else {
+                    reply = null; // No new replies found
+                }
+            }
 
             if (reply) {
-                if (Date.now() - startTime > 2 * 60 * 1000) {
-                    sendTelegramNotification('Received reply, but more than 2 minutes has passed, please relogin');
-                    console.tlog('[Telegram] Received reply, but more than 2 minutes has passed, refreshing page...');
-                    window.location.reload();
+                if (Date.now() - startTime > maxWaitTime) {
+                    return null; // Timeout waiting for response
                 } else {
-                return reply.message.text;
+                    if (callback === null) {
+                        return reply;
+                    }
+                    return callback(reply);
                 }
             }
 
