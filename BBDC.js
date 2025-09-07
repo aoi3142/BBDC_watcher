@@ -35,6 +35,8 @@ let subVehicleType = '';                          // Vehicle type, e.g., 'Circui
 // const stageSubDesc = 'Subject 3.2';
 // const subVehicleType = 'Circuit';
 
+const sleep_time = ["0038","1037"]
+
 // Global vars, do not touch
 let logged_in = true;
 let lastCheckTime = null; // Track last check time
@@ -165,6 +167,45 @@ async function initializeWhenReady() {
     }
 }
 
+function secondsUntilEnd(check_time) {
+    const [start, end] = check_time;
+
+    // Current time
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    const current = hh + mm;
+
+    // Helper to convert "HHMM" to today's Date object
+    function toDate(hhmm) {
+        const h = parseInt(hhmm.slice(0, 2), 10);
+        const m = parseInt(hhmm.slice(2), 10);
+        const d = new Date(now);
+        d.setHours(h, m, 0, 0);
+        return d;
+    }
+
+    const startTime = toDate(start);
+    let endTime = toDate(end);
+
+    // Handle wrap-around (e.g., 2200–0200)
+    if (end < start) {
+        if (now < startTime) {
+            // End time is "today", start was yesterday
+            startTime.setDate(startTime.getDate() - 1);
+        } else {
+            // End time is tomorrow
+            endTime.setDate(endTime.getDate() + 1);
+        }
+    }
+
+    if (now >= startTime && now <= endTime) {
+        return Math.floor((endTime - now) / 1000); // seconds left
+    }
+    return -1;
+}
+
 // === AVAILABILITY CHECK ===
 async function checkAvailability() {
     availabilityID = null;
@@ -182,6 +223,13 @@ async function checkAvailability() {
     const accountCourseType = document.querySelector('#app').__vue__?.$store.state.booking.activeCourseList || [];
     if (!accountCourseType || accountCourseType.length === 0) {
         scheduleNextCheck();
+        return;
+    }
+
+    const seconds_till_restart = secondsUntilEnd(sleep_time);
+    if (seconds_till_restart > 0) {
+        console.tlog(`[Monitor] Sleep time, restarting at ${sleep_time[1]}`)
+        scheduleNextCheck(seconds_till_restart * 1000 + randomizedInterval());
         return;
     }
 
