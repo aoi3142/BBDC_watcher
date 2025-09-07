@@ -222,13 +222,13 @@ function initCourseSelection() {
         if (course.canDoPracticalBooking){
             console.tlog(`[Login] Selecting course type: ${course.courseType}`);
             const {
-                accountBal: accountBal, 
-                enrExpiryDateStr: enrExpiryDateStr, 
-                authToken: authToken, 
-                courseActiveStatus: courseActiveStatus, 
-                canDoBooking: canDoBooking, 
-                canDoPracticalBooking: canDoPracticalBooking, 
-                courseType: courseType, 
+                accountBal: accountBal,
+                enrExpiryDateStr: enrExpiryDateStr,
+                authToken: authToken,
+                courseActiveStatus: courseActiveStatus,
+                canDoBooking: canDoBooking,
+                canDoPracticalBooking: canDoPracticalBooking,
+                courseType: courseType,
                 handBookInd: handBookInd
             } = course;
             vue.$store.commit("user/set_courseType", courseType);
@@ -638,19 +638,19 @@ async function preprocessCaptcha(base64Image) {
         // Create canvas for processing
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
+
         // Load image
         const img = new Image();
         img.src = base64Image;
         await new Promise(resolve => {img.onload = resolve;});
-        
+
         // Set canvas dimensions
         canvas.width = img.width;
         canvas.height = img.height;
-        
+
         // Draw original image
         ctx.drawImage(img, 0, 0);
-        
+
         // Step 1: Get image data and find dominant colors
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
@@ -666,7 +666,7 @@ async function preprocessCaptcha(base64Image) {
             const colorKey = `${r},${g},${b}`;
             colorCounts[colorKey] = (colorCounts[colorKey] || 0) + 1;
         }
-        
+
         // Get top 5 colors
         const topColors = Object.entries(colorCounts)
             .sort((a, b) => b[1] - a[1])
@@ -679,7 +679,7 @@ async function preprocessCaptcha(base64Image) {
             const g = data[i+1];
             const b = data[i+2];
             let topColorIndex = -1;
-            
+
             // Check if pixel matches any top color
             for (const [index, [tr, tg, tb]] of topColors.entries()) {
                 if (r === tr && g === tg && b === tb) {
