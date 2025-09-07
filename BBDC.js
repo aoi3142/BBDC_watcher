@@ -316,7 +316,7 @@ function initCourseSelection() {
 
         // Cancel scheduled refresh if set below in wait for auto redirect
         if (refreshTimeoutId !== null) {
-            concole.tlog('[Login] Sucessfully redirected, cancelling scheduled refresh.');
+            console.tlog('[Login] Sucessfully redirected, cancelling scheduled refresh.');
             clearTimeout(refreshTimeoutId);
             refreshTimeoutId = null; // Reset
         }
@@ -343,8 +343,10 @@ function initCourseSelection() {
     }
     if (check3C) {
         switchCourse(null, '3C');
+        return false;
     } else if (check2B) {
         switchCourse(null, '2B');
+        return false;
     } else {
         console.terror('[Login] No suitable course type found for practical booking.');
         return false; // No course type selected
@@ -523,7 +525,7 @@ async function class2BcheckAvailability() {
     };
     await checkAvailabilityByCourse(REQUEST_URL, lesson, courseType='2B');
     if (tryBook) {
-        waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
+        await waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
             const text = response?.message?.text || '';
             if (text) {
                 const date = text.split(' ')[0];
@@ -531,7 +533,7 @@ async function class2BcheckAvailability() {
                 const slot = Object.values(availabilityMaps["2B"][date]).find(slot => slot.startTime === startTime);
                 if (slot && slot.isAvailable) {
                     console.tlog('[Booking] User trying to book', slot);
-                    await book2BPracticalSlot(slot);
+                    await bookPracticalSlot(slot, courseType='2B');
                 }
             }
         }, false);
@@ -588,11 +590,11 @@ async function getCaptchaImage() {
     return data;
 }
 
-async function callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, slot) {
+async function callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, slot, courseType) {
     const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/c2practical/callBookPracticalSlot';
     const requestOptions = setupMessage(
         JSON.stringify({
-            courseType: '2B',
+            courseType: courseType,
             slotIdList: [slot.slotId],
             encryptSlotList: [{
                 slotIdEnc: slot.slotIdEnc,
@@ -623,17 +625,19 @@ async function callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, sl
     }
 }
 
-async function book2BPracticalSlot(slot) {
-    const canBook = await noActive2BpracticalBooking();
-    if (!canBook) {
-        console.terror('[Booking] Cannot book, active booking exists');
-        await sendTelegramNotification(
-            'You have an active booking for a 2B practical lesson. Please cancel it before proceeding.'
-        );
-        return;
+async function bookPracticalSlot(slot, courseType) {
+    if (courseType === '2B') {
+        const canBook = await noActive2BpracticalBooking();
+        if (!canBook) {
+            console.terror('[Booking] Cannot book, active booking exists');
+            await sendTelegramNotification(
+                'You have an active booking for a 2B practical lesson. Please cancel it before proceeding.'
+            );
+            return;
+        }
     }
     const date = slot.slotRefDate.split(' ')[0];
-    const slotList = Object.values(availabilityMaps["2B"][date]);
+    const slotList = Object.values(availabilityMaps[courseType][date]);
     if (!slotList.some(s => s.slotId === slot.slotId && s.isAvailable)) {
         console.terror('[Booking] Slot not found in availability map');
         await sendTelegramNotification(
@@ -641,18 +645,18 @@ async function book2BPracticalSlot(slot) {
         );
         return;
     }
-    const clashStatus = await class2BcheckClash(slotList);
-    console.tlog('[Booking] Clash status:', clashStatus);
-    if (clashStatus.some(s => s.clash)) {
-        console.terror('[Booking] Booking clash detected, cannot proceed with booking');
-        await sendTelegramNotification(
-            'Booking clash detected, do you have another booking for this slot? Please cancel it before proceeding.'
-        );
-        return;
-    }
+    // const clashStatus = await class2BcheckClash(slotList);
+    // console.tlog('[Booking] Clash status:', clashStatus);
+    // if (clashStatus.some(s => s.clash)) {
+    //     console.terror('[Booking] Booking clash detected, cannot proceed with booking');
+    //     await sendTelegramNotification(
+    //         'Booking clash detected, do you have another booking for this slot? Please cancel it before proceeding.'
+    //     );
+    //     return;
+    // }
     const captchaData = await getCaptchaImage();
     const [captchaToken, verifyCodeId, captchaText] = await dealWithCaptcha(captchaData);
-    await callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, slot);
+    await callBookPracticalSlot(captchaToken, verifyCodeId, captchaText, slot, courseType);
 }
 
 async function list2Bbookings() {
@@ -801,14 +805,17 @@ function randomizedInterval(min = INTERVAL_MINUTES_MIN, max = INTERVAL_MINUTES_M
 }
 
 async function class3checkAvailability() {
-    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/c3practical/checkExistsC3PracticalTrainingSlot';
+    const REQUEST_URL = 'https://booking.bbdc.sg/bbdc-back-service/api/booking/c3practical/listC3PracticalSlotReleased';
     const lesson = {
+        insInstructorId: '',
+        courseType: '3C',
+        stageSubDesc: "Practical Lesson",
+        subVehicleType: null,
         subStageSubNo: null,
-        insInstructorId: ''
     };
     await checkAvailabilityByCourse(REQUEST_URL, lesson, courseType='3C');
     if (tryBook) {
-        waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
+        await waitForTelegramResponse(lastTelegramMessageRes, async (response) => {
             const text = response?.message?.text || '';
             if (text) {
                 const date = text.split(' ')[0];
@@ -816,7 +823,7 @@ async function class3checkAvailability() {
                 const slot = Object.values(availabilityMaps["3C"][date]).find(slot => slot.startTime === startTime);
                 if (slot && slot.isAvailable) {
                     console.tlog('[Booking] User trying to book', slot);
-                    // await book2BPracticalSlot(slot);
+                    await bookPracticalSlot(slot, courseType='3C');
                 }
             }
         }, false);
