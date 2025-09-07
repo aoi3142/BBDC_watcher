@@ -51,6 +51,8 @@ let trySolve = true;
 let login_tries = 3;
 let check_tries = 3;
 
+let refreshTimeoutId = null;
+
 (function() {
     'use strict';
 
@@ -284,6 +286,14 @@ function initCourseSelection() {
     const vue = document.querySelector('#app').__vue__;
     if (vue.$store.state.user.courseType !== '') {
         console.tlog('[Login] Course type already selected:', vue?.$store.state.user.courseType);
+
+        // Cancel scheduled refresh if set below in wait for auto redirect
+        if (refreshTimeoutId !== null) {
+            concole.tlog('[Login] Sucessfully redirected, cancelling scheduled refresh.');
+            clearTimeout(refreshTimeoutId);
+            refreshTimeoutId = null; // Reset
+        }
+
         return true;
     }
     const courseList = vue.$store.state.booking.activeCourseList;
@@ -292,6 +302,16 @@ function initCourseSelection() {
         return false;
     } else if (courseList.length === 1) {
         console.tlog('[Login] Only one course type found, waiting for auto redirect.');
+
+        // Fallback refresh the page if not auto-redirected
+        if (refreshTimeoutId !== null) {
+            clearTimeout(refreshTimeoutId);
+        }
+        console.tlog('[Login] Scheduling a refresh for 5 minutes in case auto redirect fails.');
+        refreshTimeoutId = setTimeout(() => {
+            location.reload(); // Refresh the page
+        }, 5 * 60 * 1000); // 5 minutes in milliseconds
+
         return false; // Wait for auto redirect
     }
     for (const course of courseList) {
