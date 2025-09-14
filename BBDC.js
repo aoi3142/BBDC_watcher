@@ -867,19 +867,33 @@ async function checkAvailabilityByCourse(REQUEST_URL, lesson, courseType) {
     const newAvailabilityMap = {};
     for ([date, slots] of Object.entries(slotsByDay)) {
         date = date.split(' ')[0]; // Extract date part only
+        // Check that date is within range
+        const slotDate = new Date(date);
+        const startDate = new Date(DATE_RANGE[0]);
+        const endDate = new Date(DATE_RANGE[1]);
+        if (slotDate < startDate || slotDate > endDate) {
+            continue;
+        }
         if (!newAvailabilityMap[date]) {
             newAvailabilityMap[date] = {};
         }
-        for (let sessionNo = 1; sessionNo <= 8; sessionNo++) {
+        isWeekday = (slotDate.getDay() !== 0 && slotDate.getDay() !== 6);
+        minSession = isWeekday ? MIN_WEEKDAY_SESSION : MIN_SESSION;
+        for (let sessionNo = minSession; sessionNo <= 8; sessionNo++) {
             const slot = slots.find(s => (s?.c2psrSessionNo || s?.c3PsrSessionNo) === sessionNo);
             if (slot) {
                 isAvailable = slot.bookingProgress === 'Available';
+                if (availabilityMaps[courseType][date] && availabilityMaps[courseType][date][sessionNo]) {
+                    previouslyAvailable = availabilityMaps[courseType][date][sessionNo].isAvailable;
+                } else {
+                    previouslyAvailable = false;
+                }
                 newAvailabilityMap[date][sessionNo] = {
                     isAvailable: isAvailable,
                     startTime: slot.startTime,
                     endTime: slot.endTime,
-                    new: isAvailable && (!availabilityMaps[courseType][date][sessionNo] || !availabilityMaps[courseType][date][sessionNo].isAvailable),
-                    taken: !isAvailable && availabilityMaps[courseType][date][sessionNo] && availabilityMaps[courseType][date][sessionNo].isAvailable,
+                    new: isAvailable && !previouslyAvailable,
+                    taken: !isAvailable && previouslyAvailable,
                     slotId: slot.slotId,
                     slotIdEnc: slot.slotIdEnc,
                     bookingProgressEnc: slot.bookingProgressEnc,
