@@ -19,7 +19,7 @@ const debugging = false; // Debugging class 3 availability checks, set to true t
 // === CONFIGURATION ===
 const DATE_RANGE = ["2025-07-14", "2025-07-31"];    // Set your desired date range here
 const MIN_SESSION = 1;                              // Earliest session to consider (1-8, 1 for all, 2 for morning after 09:20 etc.)
-const MIN_WEEKDAY_SESSION = 1;                      // Earliest session to consider for weekdays (1-8, 1 for all, 6 for evenings after 19:20 etc.)
+const MIN_WEEKDAY_SESSION = 1;                      // Earliest session to consider for weekdays (1-8, 1 for all, 7 for evenings after 19:20 etc.)
 
 const INTERVAL_MINUTES_MIN = 1.5;                   // Minimum refresh interval in minutes
 const INTERVAL_MINUTES_MAX = 3;                     // Maximum refresh interval in minutes
@@ -913,12 +913,22 @@ async function checkAvailabilityByCourse(REQUEST_URL, lesson, courseType) {
     }
     const currentBalance = document.querySelector('#app').__vue__?.$store.state.user.accountBal || 0;
     if (!askForBookingConfirmation) {
-        const earliestDay = availabilityMaps[courseType][Object.keys(availabilityMaps[courseType]).sort()[0]];
-        if (!earliestDay) {
+        const availableDays = Object.keys(availabilityMaps[courseType])
+            .filter(day =>
+            Object.values(availabilityMaps[courseType][day]).some(slot => slot.isAvailable)
+        );
+        console.tlog('[Booking] Available days:', availableDays);
+        if (availableDays.length === 0) {
+            console.tlog('[Booking] No available days found, skipping automatic booking.');
+            return;
+        }
+        const earliestDay = availableDays.sort()[0];
+        const earliestDaySlots = availabilityMaps[courseType][earliestDay];
+        if (!earliestDaySlots) {
             console.tlog('[Booking] No available slots found, skipping automatic booking.');
             return;
         }
-        const earliestSlot = Object.values(earliestDay).find(slot => slot.isAvailable && (slot.totalFee <= currentBalance));
+        const earliestSlot = Object.values(earliestDaySlots).find(slot => slot.isAvailable && (slot.totalFee <= currentBalance));
         if (!earliestSlot || !earliestSlot.isAvailable) {
             console.tlog('[Booking] Insufficient balance, skipping automatic booking.');
             return;
